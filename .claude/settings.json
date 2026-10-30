@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python -m unittest:*)",
+      "Bash(.venv/Scripts/python tools/:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "deny": [
+      "Read(~/AppData/Roaming/DesktopNote/**)",
+      "Edit(~/AppData/Roaming/DesktopNote/**)",
+      "Write(~/AppData/Roaming/DesktopNote/**)"
+    ]
+  }
+}

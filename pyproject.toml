@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "desktopnote"
+version = "0.1.0"
+description = "Minimal frosted-glass sticky notes for the Windows desktop"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = ["PySide6-Essentials>=6.7"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Operating System :: Microsoft :: Windows",
+    "Environment :: Win32 (MS Windows)",
+    "Topic :: Office/Business",
+]
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6"]
+
+[project.gui-scripts]
+desktopnote = "desktopnote.app:main"
+
+[tool.setuptools.packages.find]
+include = ["desktopnote*"]

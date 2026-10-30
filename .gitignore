@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Build output (scripts/build.ps1)
+build/
+dist/
+*.spec
+build_icon.ico
+
+# Output of the tools/ audits
+tools/out/
+
+# Editors / OS
+.idea/
+.vscode/
+Thumbs.db
+desktop.ini
+
+# Claude Code: personal settings stay local (CLAUDE.md and docs/ are shared)
+.claude/settings.local.json
