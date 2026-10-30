@@ -35,6 +35,7 @@ DWMNCRP_DISABLED = 1
 WM_NCCALCSIZE = 0x0083
 WM_NCACTIVATE = 0x0086
 
+WM_MOVING = 0x0216
 WM_ENTERSIZEMOVE = 0x0231
 WM_EXITSIZEMOVE = 0x0232
 
@@ -85,12 +86,20 @@ if IS_WINDOWS:
     _SetWindowPos = _user32.SetWindowPos
     _SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, c_int, c_int, c_int, c_int, wintypes.UINT]
     _SetWindowPos.restype = wintypes.BOOL
+    _GetWindowRect = _user32.GetWindowRect
+    _GetWindowRect.argtypes = [wintypes.HWND, POINTER(wintypes.RECT)]
+    _GetWindowRect.restype = wintypes.BOOL
+    _GetCursorPos = _user32.GetCursorPos
+    _GetCursorPos.argtypes = [POINTER(wintypes.POINT)]
+    _GetCursorPos.restype = wintypes.BOOL
 else:  # pragma: no cover
     _SetWCA = None
     _SetWindowPos = None
+    _GetWindowRect = None
+    _GetCursorPos = None
 
 HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
-SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE, SWP_SHOWWINDOW = 0x0001, 0x0002, 0x0010, 0x0040
+SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE, SWP_SHOWWINDOW = 0x0001, 0x0002, 0x0004, 0x0010, 0x0040
 
 
 def _abgr(rgba: int) -> int:
@@ -152,6 +161,29 @@ def bring_to_front(hwnd: int, stay_on_top: bool) -> bool:
     if not stay_on_top:
         ok = bool(_SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, flags)) and ok
     return ok
+
+
+def move_window(hwnd: int, x: int, y: int) -> bool:
+    """Moves a window to (x, y) in physical screen pixels, keeping its size, z-order and focus."""
+    if _SetWindowPos is None:
+        return False
+    return bool(_SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE))
+
+
+def window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
+    """Returns a window's (left, top, right, bottom) in physical screen pixels, or None on failure."""
+    rect = wintypes.RECT()
+    if _GetWindowRect is None or not _GetWindowRect(hwnd, byref(rect)):
+        return None
+    return rect.left, rect.top, rect.right, rect.bottom
+
+
+def cursor_pos() -> tuple[int, int] | None:
+    """Returns the cursor position in physical screen pixels, or None on failure."""
+    point = wintypes.POINT()
+    if _GetCursorPos is None or not _GetCursorPos(byref(point)):
+        return None
+    return point.x, point.y
 
 
 def def_window_proc(hwnd: int, msg: int, wparam: int, lparam: int) -> int:

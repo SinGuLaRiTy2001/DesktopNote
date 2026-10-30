@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from desktopnote import i18n  # noqa: E402
 from desktopnote.models import Item, Note  # noqa: E402
+from desktopnote.note_window import Snapper  # noqa: E402
 from desktopnote.storage import Store  # noqa: E402
 from desktopnote.widgets import format_due, half_hour_step, humanize_delta, reminder_state  # noqa: E402
 
@@ -146,6 +147,47 @@ class StoreTest(unittest.TestCase):
             loaded = Store(path)
             loaded.load()
             self.assertEqual(loaded.notes[0].items[0].text, "keep me")
+
+
+class SnapperTest(unittest.TestCase):
+    """A dragged note snaps beside a nearby note, top edges aligned, and comes free when pulled."""
+
+    OTHER = (100, 100, 300, 400)  # (left, top, right, bottom); snapping to its right is (308, 100).
+
+    def setUp(self):
+        self.snapper = Snapper(distance=12, release=30, gap=8)
+
+    def move(self, left, top, width=200, height=200, others=None):
+        return self.snapper.update((left, top, left + width, top + height), others or [self.OTHER])
+
+    def test_snaps_to_the_right_and_aligns_top(self):
+        self.assertEqual(self.move(318, 110), (308, 100))
+
+    def test_snaps_to_the_left(self):
+        self.assertEqual(self.move(-102, 90), (-108, 100))
+
+    def test_needs_both_directions_close(self):
+        self.assertIsNone(self.move(330, 100))  # Too far sideways.
+        self.assertIsNone(self.move(308, 120))  # Too far up or down.
+
+    def test_nearest_note_wins(self):
+        others = [self.OTHER, (520, 110, 700, 300)]
+        self.assertEqual(self.move(311, 108, others=others), (312, 110))
+
+    def test_fast_move_across_the_place_snaps(self):
+        self.assertIsNone(self.move(250, 105))  # Inside the other note.
+        self.assertEqual(self.move(330, 105), (308, 100))  # Passed 308 in one move.
+
+    def test_fast_move_down_across_the_place_snaps(self):
+        self.assertIsNone(self.move(310, 70))
+        self.assertEqual(self.move(310, 125), (308, 100))  # Passed 100 in one move.
+
+    def test_holds_until_pulled_either_way(self):
+        self.move(310, 100)
+        self.assertEqual(self.move(335, 125), (308, 100))
+        self.assertIsNone(self.move(340, 100))  # Pulled sideways.
+        self.move(310, 100)
+        self.assertIsNone(self.move(310, 135))  # Pulled down.
 
 
 class VersionTest(unittest.TestCase):
