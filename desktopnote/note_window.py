@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from . import icons, motion, win_effects
 from .i18n import tr
 from .models import Item, Note, now_iso
+from .snapping import SnapMove
 from .theme import BODY_PT, Theme, glow_color, menu_qss, note_qss, tag_color
 from .widgets import (
     ColorPopup,
@@ -45,77 +46,9 @@ MIN_SIZE = QSize(200, 150)
 GLOW_HEIGHT = 44  # The tag colour fades out before the first row, so text contrast holds.
 GLOW_MS = 260  # Cross-fade when the tag changes.
 FLASH_MS = 900  # Pulse when a note is picked from the tray list.
-SNAP_DISTANCE = 32  # How close in px a moved note must come to its snapped place to snap.
-SNAP_RELEASE = 72  # How far in px, either way, a snapped note must be pulled to come free.
-SNAP_GAP = 4  # Space in px left between snapped notes.
-SNAP_MS = 160  # Glide into and out of the snapped place.
-# A strong ease-out: the note leaps most of the way at once and settles softly, without overshoot.
-SNAP_EASING = QEasingCurve.OutQuint
 # A non-layered window with DWM acrylic moves and resizes in lockstep with the cursor. Without it,
 # Qt makes the frameless translucent window layered, which flickers on resize.
 NATIVE_BACKDROP = win_effects.HAS_SYSTEM_BACKDROP
-
-Rect = tuple[int, int, int, int]  # (left, top, right, bottom).
-
-
-class Snapper:
-    """Decides, move by move, where a dragged note snaps beside another note.
-
-    Distances are measured between the top corners on the facing sides: the dragged note's
-    top-left corner and the place ``gap`` to the right of the other note's top-right corner, or
-    the mirror image on the left. The note snaps when that corner comes within ``distance`` of
-    the place both sideways and up and down, or passes the place between two moves (a fast drag).
-    It then sits there with its top edge aligned to the other note's, until it is pulled more
-    than ``release`` away in either direction.
-
-    All values are in pixels; the rects are (left, top, right, bottom).
-
-    Attributes:
-        distance: How close to a place, in both directions, the note snaps to it.
-        release: How far the note must be pulled, in either direction, to come free.
-        gap: The space left between snapped notes.
-        held: The (left, top) the note is snapped to, or None.
-    """
-
-    def __init__(self, distance: int, release: int, gap: int):
-        self.distance, self.release, self.gap = distance, release, gap
-        self.held: tuple[int, int] | None = None
-        self._last: tuple[int, int] | None = None  # The note's (left, top) at the previous move.
-
-    def update(self, rect: Rect, others: list[Rect], scale: float = 1.0) -> tuple[int, int] | None:
-        """Returns where the note moved to ``rect`` sits: its snapped (left, top), or None.
-
-        Args:
-            rect: Where the note would be without snapping.
-            others: The other notes.
-            scale: Factor applied to distance, release and gap (the display's pixel ratio).
-        """
-        distance, release, gap = (round(v * scale) for v in (self.distance, self.release, self.gap))
-        left, top, right, _bottom = rect
-        places = {}  # (left, top) -> (dx, dy) of the note's facing top corner from the place's.
-        for o_left, o_top, o_right, _o_bottom in others:
-            for x in (o_right + gap, o_left - gap - (right - left)):  # To its right, to its left.
-                places[(x, o_top)] = (left - x, top - o_top)
-        last, self._last = self._last, (left, top)
-        if self.held is not None:
-            offset = places.get(self.held)
-            if offset is not None and abs(offset[0]) <= release and abs(offset[1]) <= release:
-                return self.held
-            self.held = None
-
-        def caught(place: tuple[int, int], dx: int, dy: int) -> bool:
-            if abs(dx) <= distance and abs(dy) <= distance:
-                return True
-            if last is None or abs(dx) > release or abs(dy) > release:
-                return False
-            passed_x = (last[0] - place[0]) * dx < 0 and abs(dy) <= distance
-            passed_y = (last[1] - place[1]) * dy < 0 and abs(dx) <= distance
-            return passed_x or passed_y
-
-        near = [(dx * dx + dy * dy, place) for place, (dx, dy) in places.items() if caught(place, dx, dy)]
-        if near:
-            self.held = min(near)[1]
-        return self.held
 
 
 class GlassMenu(QMenu):
@@ -334,7 +267,7 @@ class NoteWindow(QWidget):
 
     The window is frameless and paints its own rounded glass over the system acrylic (or a blur
     fallback), with an optional tag-colour glow along the top. It resizes from its edges, moves by
-    its grabber (snapping beside nearby notes), and switches between viewing and editing mode.
+    its grabber (snapping next to nearby notes), and switches between viewing and editing mode.
 
     Signals:
         changed: Content or geometry changed and should be persisted.
@@ -365,10 +298,7 @@ class NoteWindow(QWidget):
         self.rows: list[ItemRow] = []
         self._glass = False  # Acrylic (or blur) is active.
         self._moving = False
-        self._drag_origin = None  # Window rect and cursor position where a move or resize began.
-        self._snapper = Snapper(SNAP_DISTANCE, SNAP_RELEASE, SNAP_GAP)  # Snapping of the current drag.
-        self._glide_from = self._glide_to = self._glide_pos = (0, 0)  # Glide into the snapped place.
-        self._glide = motion.Tween(self, SNAP_MS, self._glide_step, easing=SNAP_EASING)
+        self._snap_move = SnapMove(self)  # Snap to align while dragged.
         self._intro: motion.BackdropFade | None = None  # Stand-in acrylic while fading in.
         self._glow = self._glow_target()  # Tag colour washed over the top of the glass.
         self._glow_tween: motion.Tween | None = None
@@ -995,44 +925,15 @@ class NoteWindow(QWidget):
             self.note.x, self.note.y, self.note.w, self.note.h = geo.x(), geo.y(), geo.width(), geo.height()
             self.changed.emit()
 
-    def _snap(self, rect: wintypes.RECT) -> None:
-        """Places the window rect proposed during a drag, beside a nearby note if one is close.
-
-        Windows proposes each drag position relative to the last one, so a snapped note would
-        never come free. The free position is therefore worked out from where the drag started,
-        and only then snapped (see Snapper). The note glides into its snapped place and,
-        when pulled free, back to the cursor; nothing ties the notes together afterwards.
-        """
-        cursor = win_effects.cursor_pos()
-        if self._drag_origin is None or cursor is None:
-            return
-        (left, top, right, bottom), (cursor_x, cursor_y) = self._drag_origin
-        dx, dy = cursor[0] - cursor_x, cursor[1] - cursor_y
-        free = (left + dx, top + dy, right + dx, bottom + dy)
-        others = []
+    def _other_note_rects(self) -> list[tuple[int, int, int, int]]:
+        """Returns the rects of the other visible notes in physical pixels, to snap to."""
+        rects = []
         for win in QApplication.topLevelWidgets():
             if isinstance(win, NoteWindow) and win is not self and win.isVisible():
-                other = win_effects.window_rect(int(win.winId()))
-                if other is not None:
-                    others.append(other)
-        dpr = self.devicePixelRatioF()  # The rects are in physical pixels.
-        before = self._snapper.held
-        snapped = self._snapper.update(free, others, dpr)
-        if snapped != before:  # Snapping in, or coming free: glide there.
-            here = win_effects.window_rect(int(self.winId()))
-            self._glide_from = here[:2] if here else free[:2]
-            self._glide_to = snapped or free[:2]
-            self._glide.start()
-        elif snapped is None:
-            self._glide_to = free[:2]  # A note coming free glides after the cursor.
-        x, y = self._glide_pos if self._glide.is_running() else self._glide_to
-        rect.left, rect.top, rect.right, rect.bottom = x, y, x + right - left, y + bottom - top
-
-    def _glide_step(self, v: float) -> None:
-        """Moves the window part of the way (v, eased 0..1) into or out of its snapped place."""
-        (x0, y0), (x1, y1) = self._glide_from, self._glide_to
-        self._glide_pos = (round(x0 + (x1 - x0) * v), round(y0 + (y1 - y0) * v))
-        win_effects.move_window(int(self.winId()), *self._glide_pos)
+                rect = win_effects.window_rect(int(win.winId()))
+                if rect is not None:
+                    rects.append(rect)
+        return rects
 
     def nativeEvent(self, event_type, message):
         """Handles the Windows messages behind the frameless acrylic window.
@@ -1044,11 +945,9 @@ class NoteWindow(QWidget):
         if event_type == b"windows_generic_MSG" or event_type == "windows_generic_MSG":
             msg = wintypes.MSG.from_address(int(message))
             if msg.message == win_effects.WM_ENTERSIZEMOVE:
-                rect, cursor = win_effects.window_rect(int(self.winId())), win_effects.cursor_pos()
-                self._drag_origin = (rect, cursor) if rect and cursor else None
-                self._snapper = Snapper(SNAP_DISTANCE, SNAP_RELEASE, SNAP_GAP)
+                self._snap_move.begin()
             if msg.message == win_effects.WM_MOVING:
-                self._snap(wintypes.RECT.from_address(msg.lParam))
+                self._snap_move.place(wintypes.RECT.from_address(msg.lParam), self._other_note_rects())
                 return True, 1
             if NATIVE_BACKDROP:
                 if msg.message == win_effects.WM_NCCALCSIZE and msg.wParam:

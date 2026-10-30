@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from desktopnote import i18n  # noqa: E402
 from desktopnote.models import Item, Note  # noqa: E402
-from desktopnote.note_window import Snapper  # noqa: E402
+from desktopnote.snapping import Snapper  # noqa: E402
 from desktopnote.storage import Store  # noqa: E402
 from desktopnote.widgets import format_due, half_hour_step, humanize_delta, reminder_state  # noqa: E402
 
@@ -150,7 +150,7 @@ class StoreTest(unittest.TestCase):
 
 
 class SnapperTest(unittest.TestCase):
-    """A dragged note snaps beside a nearby note, top edges aligned, and comes free when pulled."""
+    """A dragged note snaps next to a nearby note, edges aligned, and comes free when pulled."""
 
     OTHER = (100, 100, 300, 400)  # (left, top, right, bottom); snapping to its right is (308, 100).
 
@@ -165,6 +165,19 @@ class SnapperTest(unittest.TestCase):
 
     def test_snaps_to_the_left(self):
         self.assertEqual(self.move(-102, 90), (-108, 100))
+
+    def test_snaps_below_aligned_left_or_right(self):
+        self.assertEqual(self.move(110, 420), (100, 408))  # Top-left near its bottom-left.
+        self.snapper.held = None
+        self.assertEqual(self.move(115, 400, width=180), (120, 408))  # Top-right near its bottom-right.
+
+    def test_snaps_beside_with_bottom_edges_aligned(self):
+        self.assertEqual(self.move(315, 210), (308, 200))  # Bottom-left near its bottom-right.
+        self.snapper.held = None
+        self.assertEqual(self.move(-110, 195), (-108, 200))  # Bottom-right near its bottom-left.
+
+    def test_snaps_above(self):
+        self.assertEqual(self.move(104, -100, height=180), (100, -88))
 
     def test_needs_both_directions_close(self):
         self.assertIsNone(self.move(330, 100))  # Too far sideways.

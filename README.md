@@ -24,6 +24,7 @@ stay exactly where you left them.
 - **Colour tags**: tint a note with one of the preset colours or any custom colour, so notes
   are easy to tell apart.
 - **Titles and keep-on-top**: give a note an optional title, or keep it above other windows.
+- **Snap to align**: drag a note close to another and it snaps next to it, edges aligned.
 - **Tray menu**: create notes, bring them all to the front, jump to one note by name, and change
   settings.
 - **Settings**: theme (light, dark or match Windows), language (English or Simplified Chinese),
