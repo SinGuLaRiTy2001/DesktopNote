@@ -369,7 +369,6 @@ class ItemRow(QWidget):
         self.editing = False
 
         self._icon_px = self.ICON
-        self._editor_qss = ""
         self._due_icon_px = self.DUE_ICON
         self._hover = 0.0  # Highlight level, eased.
         self._hover_tween: motion.Tween | None = None
@@ -540,10 +539,10 @@ class ItemRow(QWidget):
         font.setStrikeOut(item.done and item.type == "todo")
         self.editor.setFont(font)
         dim = item.done and item.type != "text"
-        qss = f"color: {theme.secondary if dim else theme.text};"
-        if qss != self._editor_qss:  # A style sheet change restyles the editor, so only when needed.
-            self._editor_qss = qss
-            self.editor.setStyleSheet(qss)
+        if bool(self.editor.property("dim")) != dim:  # Restyled from note_qss, only on change.
+            self.editor.setProperty("dim", dim)
+            self.editor.style().unpolish(self.editor)
+            self.editor.style().polish(self.editor)
 
         if item.type == "todo":
             # Done todos are grey, like done reminders.

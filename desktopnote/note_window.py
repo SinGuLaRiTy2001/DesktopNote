@@ -475,6 +475,7 @@ class NoteWindow(QWidget):
         self.btn_cancel = QToolButton(bar)
         self.btn_cancel.clicked.connect(lambda: self.bottom.setCurrentIndex(0))
         self.btn_confirm_delete = QToolButton(bar)
+        self.btn_confirm_delete.setObjectName("confirmDelete")
         self.btn_confirm_delete.clicked.connect(lambda: self.deleteRequested.emit(self))
         lay.addWidget(self.confirm_label)
         lay.addStretch(1)
@@ -497,7 +498,6 @@ class NoteWindow(QWidget):
         self.btn_reminder.setIcon(icons.icon("bell", icon_color))
         self.btn_edit.setIcon(icons.icon("pencil", icon_color))
         self.btn_more.setIcon(icons.icon("ellipsis", icon_color))
-        self.btn_confirm_delete.setStyleSheet(f"color:{theme.red}; font-weight:600; padding:4px 10px;")
         self.pin_mark.setVisible(self.note.pinned)
         self._update_placeholder()  # The inline icon is tinted with the theme.
         for row in self.rows:

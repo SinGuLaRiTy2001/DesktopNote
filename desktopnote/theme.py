@@ -290,6 +290,7 @@ def note_qss(t: Theme) -> str:
     QTextEdit {{ border: none; background: transparent;
         selection-background-color: {t.accent_fill}; selection-color: white;
         placeholder-text-color: {t.secondary}; }}
+    QTextEdit[dim="true"] {{ color: {t.secondary}; }}  /* Done to-dos and reminders. */
     QLineEdit#title {{
         border: none; background: transparent; color: {t.text}; padding: 3px 0 1px 6px;
         selection-background-color: {t.accent_fill}; selection-color: white; placeholder-text-color: {t.secondary};
@@ -300,6 +301,7 @@ def note_qss(t: Theme) -> str:
     QToolButton#dueButton {{ color: {t.secondary}; padding: 0px 0px 2px 6px; border-radius: 6px; }}
     QToolButton#dueButton[state="soon"] {{ color: {t.orange}; }}
     QToolButton#dueButton[state="overdue"] {{ color: {t.red}; }}
+    QToolButton#confirmDelete {{ color: {t.red}; font-weight: 600; padding: 4px 10px; }}
     QToolButton#doneButton {{ color: {t.accent}; font-weight: 600; padding: 3px 10px 5px 10px; }}  /* glyphs sit low */
     QLabel#placeholder {{ color: {t.secondary}; }}  /* font: NoteWindow._scale_hint */
     QFrame#separator {{ background: {t.separator}; max-height: 1px; min-height: 1px; }}
