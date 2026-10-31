@@ -8,11 +8,9 @@ __pycache__/
 .venv/
 venv/
 
-# Build output (scripts/build.ps1)
+# Build output (scripts/build.py)
 build/
 dist/
-*.spec
-build_icon.ico
 
 # Output of the tools/ audits
 tools/out/

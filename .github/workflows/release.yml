@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write  # To create the GitHub Release.
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install the pinned build tools
+        run: python -m pip install -r scripts/release-requirements.txt
+
+      - name: Check that the tag matches the version
+        shell: bash
+        run: |
+          version=$(python -c "import re; print(re.search(r'__version__ = \"([^\"]+)\"', open('desktopnote/__init__.py').read()).group(1))")
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "Tag $GITHUB_REF_NAME does not match version $version"; exit 1; }
+
+      - name: Run unit tests
+        run: python -m unittest discover tests -v
+
+      - name: Build the release
+        run: python scripts/build.py
+
+      - name: Publish the GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/build.py --notes > release-notes.md
+          prerelease=$([[ "$GITHUB_REF_NAME" =~ (a|b|rc)[0-9]+$ ]] && echo "--prerelease" || true)
+          gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.zip.sha256 \
+            --title "DesktopNote ${GITHUB_REF_NAME#v}" --notes-file release-notes.md $prerelease

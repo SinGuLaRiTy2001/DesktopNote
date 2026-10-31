@@ -36,7 +36,19 @@ stay exactly where you left them.
 
 ## Getting started
 
-Requirements: Windows 10 or 11 (full glass on Windows 11 22H2 and later), Python 3.10+.
+Requirements: 64-bit Windows 10 or 11 (full glass on Windows 11 22H2 and later).
+
+1. Download `DesktopNote-<version>-win64.zip` from [Releases](https://github.com/SinGuLaRiTy2001/DesktopNote/releases).
+2. Extract it anywhere, for example to `%LOCALAPPDATA%\Programs\`, and run `DesktopNote\DesktopNote.exe`.
+   No installation is needed. Windows may warn about an app from an unknown publisher the first
+   time; choose **More info** → **Run anyway**.
+
+DesktopNote runs in the system tray. On first start it opens a welcome note that walks you
+through the basics. To remove it, turn off **Start at Login**, quit, and delete the folder.
+
+### Run from source
+
+Requires Python 3.10+.
 
 ```powershell
 git clone https://github.com/SinGuLaRiTy2001/DesktopNote.git
@@ -46,14 +58,7 @@ py -3 -m venv .venv
 .\.venv\Scripts\pythonw DesktopNote.pyw
 ```
 
-DesktopNote runs in the system tray. On first start it opens a welcome note that walks you
-through the basics.
-
-To build a standalone executable:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build.ps1
-```
+To build the release zip, see [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Usage
 
@@ -96,6 +101,7 @@ In edit mode, add items with the buttons at the bottom of the note.
 
 Notes and settings are stored in `notes.json` in `%APPDATA%\DesktopNote\`, with the previous
 version kept as `notes.json.bak`. To move your notes to another computer, copy this folder.
+Warnings and errors, if any, are logged to `desktopnote.log` in the same folder.
 
 ## How it's built
 
@@ -106,9 +112,11 @@ Built with [Claude Code](https://claude.com/claude-code) under a defined scope a
 | [`desktopnote/`](desktopnote/) | Application package |
 | [`tests/`](tests/) | Unit tests, run in [CI](.github/workflows/ci.yml) on Python 3.10–3.13 |
 | [`tools/`](tools/README.md) | On-screen audits for alignment, text size, contrast and startup time |
+| [`scripts/`](scripts/) | Release build ([docs/RELEASING.md](docs/RELEASING.md)); changes in [CHANGELOG.md](CHANGELOG.md) |
 | [`CLAUDE.md`](CLAUDE.md) | Product requirements that every change must meet |
 | [`.claude/`](.claude/) | Claude Code settings and workflow commands (`/verify`, `/bugfix`, `/audit`) |
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). The Windows release bundles Qt, PySide6 and Python; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
