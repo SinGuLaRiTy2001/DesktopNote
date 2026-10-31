@@ -323,15 +323,19 @@ def set_autostart(enabled: bool) -> None:
                 pass
 
 
-def is_autostart_enabled() -> bool:
-    """Returns whether a DesktopNote entry exists under the current user's Run registry key."""
+def autostart_entry() -> str | None:
+    """Returns the command of the DesktopNote entry under the user's Run registry key, or None."""
     if not IS_WINDOWS:
-        return False
+        return None
     import winreg
 
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY) as key:
-            winreg.QueryValueEx(key, _RUN_NAME)
-            return True
+            return winreg.QueryValueEx(key, _RUN_NAME)[0]
     except OSError:
-        return False
+        return None
+
+
+def is_autostart_enabled() -> bool:
+    """Returns whether a DesktopNote entry exists under the current user's Run registry key."""
+    return autostart_entry() is not None

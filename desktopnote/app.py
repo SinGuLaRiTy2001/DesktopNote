@@ -1,19 +1,20 @@
 """Application controller: owns the store, note windows, tray icon and timers."""
 from __future__ import annotations
 
-import getpass
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
 from ctypes import wintypes
 from datetime import datetime
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QRect, Qt, QTimer, QUrl
 from PySide6.QtGui import QCursor, QDesktopServices, QFont, QGuiApplication
-from PySide6.QtNetwork import QLocalServer, QLocalSocket
+from PySide6.QtNetwork import QLocalServer
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidgetAction
 
 from . import __version__, i18n, icons, motion, win_effects
 from .i18n import tr
+from .instance import SERVER_NAME, claim
 from .models import Item, Note
 from .note_window import GlassMenu, NoteWindow, glass_menu
 from .storage import Store, data_dir
@@ -22,9 +23,10 @@ from .widgets import GlassToolTip, SegmentedControl, TextSizeSlider, default_due
 
 log = logging.getLogger(__name__)
 
-SERVER_NAME = f"DesktopNote-{getpass.getuser()}"  # Per user: each Windows user gets their own instance.
 SAVE_DELAY_MS = 400
 LABEL_CHARS = 32  # Tray-list entries are cut to this many characters.
+LOG_FILE = "desktopnote.log"  # In the data folder; only warnings and errors are written.
+LOG_BYTES = 256 * 1024  # The log is rotated at this size, keeping one older file.
 
 # Windows messages and power-broadcast events handled by _SystemEventFilter.
 WM_QUERYENDSESSION = 0x0011
@@ -128,12 +130,12 @@ class DesktopNoteApp:
             if not self.store.notes:
                 self.store.notes.append(self._welcome_note())
             self.save_now()
-        elif settings.autostart and not win_effects.is_autostart_enabled():
-            # Keep the Run entry pointing at the current install location.
+        elif settings.autostart and win_effects.autostart_entry() != win_effects.autostart_command():
+            # Keeps the Run entry pointing at the current install, e.g. after the folder moved.
             try:
                 win_effects.set_autostart(True)
-            except OSError:
-                pass
+            except OSError as exc:
+                log.warning("autostart: %s", exc)
         # One ghost per note plus the tray menus, so theme cross-fades start at once.
         motion.Ghost.prewarm(len(self.store.notes) + 3)
         for note in self.store.notes:
@@ -553,17 +555,29 @@ class DesktopNoteApp:
 # --- Single instance ---------------------------------------------------------
 
 
-def _signal_running_instance() -> bool:
-    """Asks an already running instance to show its notes; returns True if one answered."""
-    sock = QLocalSocket()
-    sock.connectToServer(SERVER_NAME)
-    if sock.waitForConnected(300):
-        sock.write(b"show")
-        sock.flush()
-        sock.waitForBytesWritten(300)
-        sock.disconnectFromServer()
-        return True
-    return False
+def _setup_logging() -> None:
+    """Logs warnings and errors to LOG_FILE, and everything to the console if there is one.
+
+    A windowed app has no console, so unhandled exceptions, which Qt prints and survives, are
+    logged as well.
+    """
+    handlers: list[logging.Handler] = []
+    try:
+        to_file = RotatingFileHandler(data_dir() / LOG_FILE, maxBytes=LOG_BYTES, backupCount=1,
+                                      encoding="utf-8", delay=True)  # Created on the first message.
+        to_file.setLevel(logging.WARNING)
+        handlers.append(to_file)
+    except OSError:
+        pass
+    if sys.stderr is not None:
+        handlers.append(logging.StreamHandler())
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+                        handlers=handlers)
+
+    def log_unhandled(kind, value, tb) -> None:
+        logging.getLogger("desktopnote").error("Unhandled exception", exc_info=(kind, value, tb))
+
+    sys.excepthook = log_unhandled
 
 
 def main() -> int:
@@ -572,7 +586,9 @@ def main() -> int:
     Returns:
         The process exit code.
     """
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    if not claim(SERVER_NAME):  # Before any window code: a second launch hands over quickly.
+        return 0
+    _setup_logging()
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     if sys.platform == "win32":
         import ctypes
@@ -590,9 +606,6 @@ def main() -> int:
     font.setFamilies(FONT_FAMILIES)
     font.setPointSizeF(10)
     qapp.setFont(font)
-
-    if _signal_running_instance():
-        return 0
 
     QLocalServer.removeServer(SERVER_NAME)
     server = QLocalServer()

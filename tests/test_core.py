@@ -15,6 +15,7 @@ from PySide6.QtCore import QPoint, QRect  # noqa: E402
 
 from desktopnote import i18n  # noqa: E402
 from desktopnote.docking import closed_edges, dock_edge, hidden_pos, reveal_zone, revealed_rect  # noqa: E402
+from desktopnote.instance import claim  # noqa: E402
 from desktopnote.models import Item, Note  # noqa: E402
 from desktopnote.snapping import Snapper  # noqa: E402
 from desktopnote.storage import Store  # noqa: E402
@@ -277,6 +278,24 @@ class DockPersistenceTest(unittest.TestCase):
             loaded = Store(path)
             loaded.load()
             self.assertEqual([(n.dock, n.x, n.y) for n in loaded.notes], [("right", 2260, 300), ("", 600, 500)])
+
+
+class SingleInstanceTest(unittest.TestCase):
+    """Only one process claims an instance; others hand over to it."""
+
+    NAME = "DesktopNote-test-single-instance"
+
+    def test_first_claim_wins_and_others_hand_over(self):
+        import subprocess
+        import time
+        start = time.perf_counter()
+        self.assertTrue(claim(self.NAME))
+        self.assertLess(time.perf_counter() - start, 0.2)  # A first launch is not delayed.
+        self.assertTrue(claim(self.NAME))  # Claiming again in the same process keeps it.
+        other = subprocess.run([sys.executable, "-c", "import sys; sys.path.insert(0, sys.argv[1]); "
+                                "from desktopnote.instance import claim; sys.exit(0 if claim(sys.argv[2], 0.2) else 1)",
+                                str(Path(__file__).resolve().parents[1]), self.NAME], timeout=30)
+        self.assertEqual(other.returncode, 1)  # Another process does not get it.
 
 
 class VersionTest(unittest.TestCase):
