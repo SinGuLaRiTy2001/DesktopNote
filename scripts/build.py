@@ -142,7 +142,8 @@ def package(ver: str) -> Path:
             if path.is_file():
                 zf.write(path, Path("DesktopNote") / path.relative_to(APP))
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    (DIST / f"{archive.name}.sha256").write_text(f"{digest}  {archive.name}\n", encoding="utf-8")
+    # LF line ending, as sha256sum -c expects.
+    (DIST / f"{archive.name}.sha256").write_bytes(f"{digest}  {archive.name}\n".encode("ascii"))
     return archive
 
 

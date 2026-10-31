@@ -42,5 +42,8 @@ jobs:
         run: |
           python scripts/build.py --notes > release-notes.md
           prerelease=$([[ "$GITHUB_REF_NAME" =~ (a|b|rc)[0-9]+$ ]] && echo "--prerelease" || true)
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release delete "$GITHUB_REF_NAME" --yes
+          fi
           gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.zip.sha256 \
             --title "DesktopNote ${GITHUB_REF_NAME#v}" --notes-file release-notes.md $prerelease
