@@ -1,4 +1,4 @@
-"""Unit tests for the non-GUI core: reminders, date formatting, notes, i18n and storage.
+"""Unit tests for the non-GUI core: reminders, dates, notes, i18n, storage, snapping and docking.
 
 Run from the repository root with ``python -m unittest discover tests``.
 """
@@ -11,7 +11,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from PySide6.QtCore import QPoint, QRect  # noqa: E402
+
 from desktopnote import i18n  # noqa: E402
+from desktopnote.docking import closed_edges, dock_edge, hidden_pos, reveal_zone, revealed_rect  # noqa: E402
 from desktopnote.models import Item, Note  # noqa: E402
 from desktopnote.snapping import Snapper  # noqa: E402
 from desktopnote.storage import Store  # noqa: E402
@@ -187,6 +190,21 @@ class SnapperTest(unittest.TestCase):
         others = [self.OTHER, (520, 110, 700, 300)]
         self.assertEqual(self.move(311, 108, others=others), (312, 110))
 
+    def test_aligned_edge_limits_the_places(self):
+        # Hidden at the right screen edge: only above or below it, right edges aligned.
+        self.assertIsNone(self.snapper.update((310, 100, 510, 300), [self.OTHER], aligned=["right"]))  # Beside.
+        narrow = (115, 410, 295, 610)  # 180 px wide, nearer the right-aligned place (120, 408).
+        self.assertEqual(self.snapper.update(narrow, [self.OTHER], aligned=["right"]), (120, 408))
+        self.snapper.held = None
+        self.assertIsNone(self.snapper.update(narrow, [self.OTHER], aligned=["left"]))  # (100, 408) is 15 px off.
+
+    def test_reports_the_note_snapped_to(self):
+        others = [(900, 900, 1000, 1000), self.OTHER]
+        self.move(310, 100, others=others)
+        self.assertEqual(self.snapper.held_other, 1)
+        self.move(400, 100, others=others)  # Pulled free.
+        self.assertIsNone(self.snapper.held_other)
+
     def test_fast_move_across_the_place_snaps(self):
         self.assertIsNone(self.move(250, 105))  # Inside the other note.
         self.assertEqual(self.move(330, 105), (308, 100))  # Passed 308 in one move.
@@ -201,6 +219,64 @@ class SnapperTest(unittest.TestCase):
         self.assertIsNone(self.move(340, 100))  # Pulled sideways.
         self.move(310, 100)
         self.assertIsNone(self.move(310, 135))  # Pulled down.
+
+
+class DockingTest(unittest.TestCase):
+    """A note dragged against a screen edge hides there, peeking out."""
+
+    AREA = QRect(0, 0, 1920, 1040)  # A screen's available area.
+
+    def test_edge_touched_or_crossed(self):
+        self.assertEqual(dock_edge(QRect(1700, 300, 300, 200), self.AREA), "right")
+        self.assertEqual(dock_edge(QRect(1620, 300, 300, 200), self.AREA), "right")  # Flush.
+        self.assertEqual(dock_edge(QRect(-50, 300, 300, 200), self.AREA), "left")
+        self.assertEqual(dock_edge(QRect(500, -20, 300, 200), self.AREA), "top")
+        self.assertEqual(dock_edge(QRect(500, 900, 300, 200), self.AREA), "")  # Bottom: no.
+        self.assertEqual(dock_edge(QRect(500, 300, 300, 200), self.AREA), "")
+
+    def test_corner_picks_the_edge_crossed_further(self):
+        self.assertEqual(dock_edge(QRect(1700, -10, 300, 200), self.AREA), "right")
+        self.assertEqual(dock_edge(QRect(1625, -40, 300, 200), self.AREA), "top")
+
+    def test_closed_edge_does_not_dock(self):
+        self.assertEqual(dock_edge(QRect(1700, 300, 300, 200), self.AREA, {"right"}), "")
+
+    def test_revealed_rect_is_flush_and_on_screen(self):
+        self.assertEqual(revealed_rect(QRect(1700, -30, 300, 200), self.AREA, "right"), QRect(1620, 0, 300, 200))
+        self.assertEqual(revealed_rect(QRect(-80, 300, 300, 200), self.AREA, "left"), QRect(0, 300, 300, 200))
+
+    def test_hidden_note_peeks_out(self):
+        revealed = QRect(1620, 300, 300, 200)
+        self.assertEqual(hidden_pos(revealed, self.AREA, "right"), QPoint(1908, 300))
+        self.assertEqual(hidden_pos(QRect(0, 300, 300, 200), self.AREA, "left"), QPoint(-288, 300))
+        self.assertEqual(hidden_pos(QRect(500, 0, 300, 200), self.AREA, "top"), QPoint(500, -188))
+
+    def test_reveal_zone_runs_along_the_note_at_the_edge(self):
+        zone = reveal_zone(QRect(1620, 300, 300, 200), self.AREA, "right")
+        self.assertTrue(zone.contains(QPoint(1919, 400)))
+        self.assertFalse(zone.contains(QPoint(1919, 520)))  # Below the note.
+        self.assertFalse(zone.contains(QPoint(1900, 400)))  # Too far from the edge.
+
+    def test_edge_shared_with_another_monitor_is_closed(self):
+        main, right = QRect(0, 0, 1920, 1080), QRect(1920, 0, 1920, 1080)
+        self.assertEqual(closed_edges(main, [right], QRect(1700, 300, 300, 200)), {"right"})
+        self.assertEqual(closed_edges(right, [main], QRect(1900, 300, 300, 200)), {"left"})
+        above = QRect(0, -1080, 1920, 1080)
+        self.assertEqual(closed_edges(main, [above], QRect(500, -10, 300, 200)), {"top"})
+
+
+class DockPersistenceTest(unittest.TestCase):
+    """A note hidden at a screen edge is saved and loaded with its edge and its shown position."""
+
+    def test_dock_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "notes.json"
+            store = Store(path)
+            store.notes = [Note(x=2260, y=300, dock="right"), Note(x=600, y=500)]
+            store.save()
+            loaded = Store(path)
+            loaded.load()
+            self.assertEqual([(n.dock, n.x, n.y) for n in loaded.notes], [("right", 2260, 300), ("", 600, 500)])
 
 
 class VersionTest(unittest.TestCase):

@@ -92,11 +92,15 @@ if IS_WINDOWS:
     _GetCursorPos = _user32.GetCursorPos
     _GetCursorPos.argtypes = [POINTER(wintypes.POINT)]
     _GetCursorPos.restype = wintypes.BOOL
+    _GetAsyncKeyState = _user32.GetAsyncKeyState
+    _GetAsyncKeyState.argtypes = [c_int]
+    _GetAsyncKeyState.restype = ctypes.c_short
 else:  # pragma: no cover
     _SetWCA = None
     _SetWindowPos = None
     _GetWindowRect = None
     _GetCursorPos = None
+    _GetAsyncKeyState = None
 
 HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
 SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE, SWP_SHOWWINDOW = 0x0001, 0x0002, 0x0004, 0x0010, 0x0040
@@ -163,6 +167,14 @@ def bring_to_front(hwnd: int, stay_on_top: bool) -> bool:
     return ok
 
 
+def set_topmost(hwnd: int, on: bool) -> bool:
+    """Puts a window above all normal windows (on) or back among them, without focusing it."""
+    if _SetWindowPos is None:
+        return False
+    flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+    return bool(_SetWindowPos(hwnd, HWND_TOPMOST if on else HWND_NOTOPMOST, 0, 0, 0, 0, flags))
+
+
 def move_window(hwnd: int, x: int, y: int) -> bool:
     """Moves a window to (x, y) in physical screen pixels, keeping its size, z-order and focus."""
     if _SetWindowPos is None:
@@ -184,6 +196,11 @@ def cursor_pos() -> tuple[int, int] | None:
     if _GetCursorPos is None or not _GetCursorPos(byref(point)):
         return None
     return point.x, point.y
+
+
+def left_button_down() -> bool:
+    """Returns whether the left mouse button is held down right now."""
+    return _GetAsyncKeyState is not None and bool(_GetAsyncKeyState(0x01) & 0x8000)  # VK_LBUTTON
 
 
 def def_window_proc(hwnd: int, msg: int, wparam: int, lparam: int) -> int:

@@ -25,6 +25,8 @@ stay exactly where you left them.
   are easy to tell apart.
 - **Titles and keep-on-top**: give a note an optional title, or keep it above other windows.
 - **Snap to align**: drag a note close to another and it snaps next to it, edges aligned.
+- **Dock to edge**: drag a note against the left, right or top edge of the screen to tuck it
+  away; it slides out when the cursor comes to it.
 - **Tray menu**: create notes, bring them all to the front, jump to one note by name, and change
   settings.
 - **Settings**: theme (light, dark or match Windows), language (English or Simplified Chinese),

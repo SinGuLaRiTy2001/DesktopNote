@@ -165,6 +165,7 @@ class DesktopNoteApp:
         win.newNoteRequested.connect(lambda source: self.new_note(near=source))
         win.deleteRequested.connect(self.delete_note)
         self.windows[note.id] = win
+        win.dock.restore()
         win.show_animated()
         return win
 
@@ -190,16 +191,20 @@ class DesktopNoteApp:
         """Creates a note with an empty text row, opens it and focuses it.
 
         Args:
-            near: A window to cascade from; the new note copies its size and tag. Without it,
-                the note is centred on the screen under the cursor, offset so that successive
+            near: A window to cascade from; the new note copies its size and tag. A note docked
+                at a screen edge opens it beside itself instead, where it is not covered. Without
+                it, the note is centred on the screen under the cursor, offset so that successive
                 notes do not stack exactly.
 
         Returns:
             The new note's window.
         """
         if near is not None:
-            geom = near.geometry()
-            note = Note(x=geom.x() + 32, y=geom.y() + 32, w=geom.width(), h=geom.height(), tint=near.note.tint)
+            src = near.note  # Where it shows, even while hidden at an edge.
+            note = Note(x=src.x + 32, y=src.y + 32, w=src.w, h=src.h, tint=src.tint)
+            beside = near.dock.place_beside(src.w, src.h)
+            if beside is not None:
+                note.x, note.y = beside.x(), beside.y()
         else:
             area = (QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()).availableGeometry()
             note = Note(w=300, h=340)
@@ -224,6 +229,8 @@ class DesktopNoteApp:
 
     def _rescue(self, win: NoteWindow) -> None:
         """Brings a note on a monitor that has gone (or off a changed layout) back on screen."""
+        if win.dock.validate():
+            return
         note = win.note
         before = (note.x, note.y, note.w, note.h)
         self._ensure_on_screen(note)
@@ -235,13 +242,19 @@ class DesktopNoteApp:
             self._rescue(win)
 
     def show_all(self) -> None:
-        """Brings every note to the front, or creates one when there are none."""
+        """Brings every note to the front, or creates one when there are none.
+
+        Notes hidden at an edge slide out for a while.
+        """
         if not self.windows:
             self.new_note()
             return
         for win in self.windows.values():
             self._rescue(win)
-            win.bring_to_front()
+            if win.dock.edge:
+                win.dock.reveal(hold=True)
+            else:
+                win.bring_to_front()
 
     def focus_note(self, note_id: str) -> None:
         """Brings one note to the front, activates it and flashes it."""
@@ -249,7 +262,10 @@ class DesktopNoteApp:
         if win is None:
             return
         self._rescue(win)
-        win.bring_to_front()
+        if win.dock.edge:
+            win.dock.reveal(hold=True)
+        else:
+            win.bring_to_front()
         win.activateWindow()
         win.flash()
 

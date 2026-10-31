@@ -78,6 +78,8 @@ class Note:
         tint: A ``theme.TAGS`` key or a custom "#RRGGBB" colour, shown as a soft wash at the
             top of the note.
         pinned: Whether the note is kept on top of other windows.
+        dock: The screen edge the note is hidden at ("left", "right" or "top"), or "". While
+            docked, x and y keep the position where it shows when slid out.
         title: Optional title shown above the items.
         items: The note's items, in display order.
         id: Unique identifier of the note.
@@ -91,6 +93,7 @@ class Note:
     h: int = 340
     tint: str = "none"
     pinned: bool = False
+    dock: str = ""
     title: str = ""
     items: list[Item] = field(default_factory=list)
     id: str = field(default_factory=new_id)

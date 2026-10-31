@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from . import icons, motion, win_effects
 from .i18n import tr
 from .models import Item, Note, now_iso
+from .docking import EdgeDock
 from .snapping import SnapMove
 from .theme import BODY_PT, Theme, glow_color, menu_qss, note_qss, tag_color
 from .widgets import (
@@ -267,7 +268,7 @@ class NoteWindow(QWidget):
 
     The window is frameless and paints its own rounded glass over the system acrylic (or a blur
     fallback), with an optional tag-colour glow along the top. It resizes from its edges, moves by
-    its grabber (snapping next to nearby notes), and switches between viewing and editing mode.
+    its grabber (snapping next to nearby notes, hiding at a screen edge), and switches between viewing and editing mode.
 
     Signals:
         changed: Content or geometry changed and should be persisted.
@@ -299,6 +300,12 @@ class NoteWindow(QWidget):
         self._glass = False  # Acrylic (or blur) is active.
         self._moving = False
         self._snap_move = SnapMove(self)  # Snap to align while dragged.
+        self.dock = EdgeDock(self)
+        self._moved = False  # Whether the current move or resize moved the window.
+        self._snap_target: NoteWindow | None = None  # The note this one is snapped to.
+        self._cursor_watch = QTimer(self)  # Runs while a resize cursor is shown.
+        self._cursor_watch.setInterval(40)
+        self._cursor_watch.timeout.connect(self._check_resize_cursor)
         self._intro: motion.BackdropFade | None = None  # Stand-in acrylic while fading in.
         self._glow = self._glow_target()  # Tag colour washed over the top of the glass.
         self._glow_tween: motion.Tween | None = None
@@ -780,6 +787,7 @@ class NoteWindow(QWidget):
         self._apply_flags()  # Changing the flags hides the window.
         self.setGeometry(geo)
         self.show()
+        self.dock.keep_on_top()
         self.pin_mark.setVisible(self.note.pinned)
         self._touch()
 
@@ -804,6 +812,11 @@ class NoteWindow(QWidget):
             # Opacity is back at 1, so the window is no longer layered and DWM draws the acrylic.
             self._apply_glass()
             self._intro.hand_over()
+        self.dock.settle()
+
+    def reapply_glass(self) -> None:
+        """Restores the acrylic, which Windows drops while the window is translucent."""
+        self._apply_glass()
 
     def showEvent(self, e):
         super().showEvent(e)
@@ -853,7 +866,19 @@ class NoteWindow(QWidget):
         p.drawPath(path)
 
     def _edges_at(self, pos: QPoint) -> Qt.Edge:
-        """Returns the window edges a press at pos would resize; corners have a larger zone."""
+        """Returns the window edges a press at pos would resize; corners have a larger zone.
+
+        Hidden notes do not resize, nor do docked notes on their screen-edge side.
+        """
+        if self.dock.is_hidden():
+            return Qt.Edge(0)
+        edges = self._edges_in_zone(pos)
+        return edges & ~self._DOCK_SIDE.get(self.dock.edge, Qt.Edge(0))
+
+    _DOCK_SIDE = {"left": Qt.LeftEdge, "right": Qt.RightEdge, "top": Qt.TopEdge}
+
+    def _edges_in_zone(self, pos: QPoint) -> Qt.Edge:
+        """Returns the edges whose resize zone pos lies in."""
         x, y, w, h = pos.x(), pos.y(), self.width(), self.height()
         near_l, near_r = x <= CORNER, x >= w - CORNER
         near_t, near_b = y <= CORNER, y >= h - CORNER
@@ -885,9 +910,19 @@ class NoteWindow(QWidget):
         cursor = self._CURSORS.get(edges)
         if cursor is None:
             self.unsetCursor()
+            self._cursor_watch.stop()
         else:
             self.setCursor(cursor)
+            # Rows reach into the resize zone and would otherwise inherit this cursor.
+            self._cursor_watch.start()
         super().mouseMoveEvent(e)
+
+    def _check_resize_cursor(self) -> None:
+        """Drops the resize cursor once the cursor has left the edges."""
+        pos = self.mapFromGlobal(QCursor.pos())
+        if not self.rect().contains(pos) or not self._edges_at(pos):
+            self.unsetCursor()
+            self._cursor_watch.stop()
 
     def mousePressEvent(self, e):
         """Starts a system resize when the left button is pressed on an edge or corner."""
@@ -919,21 +954,40 @@ class NoteWindow(QWidget):
         self._sync_geometry()
 
     def _sync_geometry(self) -> None:
-        """Copies the window geometry into the note and emits changed if it differs."""
+        """Copies the window geometry into the note and emits changed if it differs.
+
+        Skipped while docked: the dock keeps the slid-out position in the note.
+        """
+        if self.dock.edge:
+            return
         geo = self.geometry()
         if (geo.x(), geo.y(), geo.width(), geo.height()) != (self.note.x, self.note.y, self.note.w, self.note.h):
             self.note.x, self.note.y, self.note.w, self.note.h = geo.x(), geo.y(), geo.width(), geo.height()
             self.changed.emit()
 
-    def _other_note_rects(self) -> list[tuple[int, int, int, int]]:
-        """Returns the rects of the other visible notes in physical pixels, to snap to."""
-        rects = []
-        for win in QApplication.topLevelWidgets():
-            if isinstance(win, NoteWindow) and win is not self and win.isVisible():
-                rect = win_effects.window_rect(int(win.winId()))
-                if rect is not None:
-                    rects.append(rect)
-        return rects
+    def _other_notes(self) -> list["NoteWindow"]:
+        """Returns the other notes to snap to."""
+        return [win for win in QApplication.topLevelWidgets()
+                if isinstance(win, NoteWindow) and win is not self and win.isVisible()]
+
+    def _snap(self, rect: wintypes.RECT) -> None:
+        """Snaps the drag rect proposed by WM_MOVING; a hidden note snapped to slides out."""
+        notes = [(win, win.dock.snap_rect()) for win in self._other_notes()]
+        notes = [(win, note_rect) for win, note_rect in notes if note_rect is not None]
+        self._snap_move.place(rect, [note_rect for _, note_rect in notes],
+                              [win.dock.snap_alignment() for win, _ in notes])
+        index = self._snap_move.snapped_to()
+        self._show_snap_target(notes[index][0] if index is not None else None)
+
+    def _show_snap_target(self, target: "NoteWindow | None") -> None:
+        """Keeps the note snapped to slid out while it is the target."""
+        if target is self._snap_target:
+            return
+        if self._snap_target is not None:
+            self._snap_target.dock.hold_for_snap(False)
+        self._snap_target = target
+        if target is not None:
+            target.dock.hold_for_snap(True)
 
     def nativeEvent(self, event_type, message):
         """Handles the Windows messages behind the frameless acrylic window.
@@ -945,10 +999,17 @@ class NoteWindow(QWidget):
         if event_type == b"windows_generic_MSG" or event_type == "windows_generic_MSG":
             msg = wintypes.MSG.from_address(int(message))
             if msg.message == win_effects.WM_ENTERSIZEMOVE:
+                self._moved = False
                 self._snap_move.begin()
+                self.dock.drag_started()
             if msg.message == win_effects.WM_MOVING:
-                self._snap_move.place(wintypes.RECT.from_address(msg.lParam), self._other_note_rects())
+                self._moved = True
+                self._snap(wintypes.RECT.from_address(msg.lParam))
                 return True, 1
+            if msg.message == win_effects.WM_EXITSIZEMOVE:
+                self._snap_move.stop()
+                self._show_snap_target(None)
+                self.dock.drag_finished(self._moved)
             if NATIVE_BACKDROP:
                 if msg.message == win_effects.WM_NCCALCSIZE and msg.wParam:
                     return True, 0  # Client area = whole window: no title bar or borders.

@@ -93,6 +93,82 @@ class Tween(QObject):
                 self.on_done()
 
 
+def display_frame_ms() -> int:
+    """Returns the frame time of the fastest screen in ms, between 4 (240 Hz) and FRAME_MS."""
+    rate = max((screen.refreshRate() for screen in QGuiApplication.screens()), default=60.0)
+    return max(4, min(FRAME_MS, int(1000 / max(rate, 1.0))))
+
+
+class WindowGlide(QObject):
+    """Glides a window to a target: its offset from the target eases away to nothing.
+
+    The target may move during the glide, and position() is always current. Frames follow the
+    display's refresh rate.
+
+    Attributes:
+        duration: Length of a glide in milliseconds.
+        target: Where the window is gliding to, as (x, y).
+    """
+
+    def __init__(self, parent: QObject, duration: int, apply, easing=QEasingCurve.OutQuint):
+        """Initialises the glide.
+
+        Args:
+            parent: Owner of the glide.
+            duration: Length of a glide in milliseconds.
+            apply: Called with (x, y) on every frame to move the window.
+            easing: The easing curve of the offset.
+        """
+        super().__init__(parent)
+        self.duration, self._apply = duration, apply
+        self.target = (0, 0)
+        self._offset = (0, 0)  # Offset from the target when the glide began.
+        self._on_done = None
+        self._curve = QEasingCurve(easing)
+        self._clock = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.setTimerType(Qt.PreciseTimer)
+        self._timer.setInterval(FRAME_MS)
+        self._timer.timeout.connect(self._tick)
+
+    def start(self, here: tuple[int, int], target: tuple[int, int], on_done=None) -> None:
+        """Starts gliding from here to target; on_done, if given, is called once it arrives."""
+        self._on_done = on_done
+        self._timer.setInterval(display_frame_ms())
+        self.target = target
+        self._offset = (here[0] - target[0], here[1] - target[1])
+        self._clock.start()
+        self._timer.start()
+        self._apply(*self.position())
+
+    def stop(self) -> None:
+        """Stops the glide where it is."""
+        if self._timer.isActive():
+            here = self.position()
+            self._timer.stop()
+            self.target, self._offset = here, (0, 0)
+
+    def is_running(self) -> bool:
+        """Returns whether a glide is in progress."""
+        return self._timer.isActive()
+
+    def position(self) -> tuple[int, int]:
+        """Returns the current position: the target plus what is left of the offset."""
+        left = 0.0
+        if self._timer.isActive():
+            progress = self._clock.elapsed() / self.duration
+            left = 0.0 if progress >= 1 else 1.0 - self._curve.valueForProgress(progress)
+        return round(self.target[0] + self._offset[0] * left), round(self.target[1] + self._offset[1] * left)
+
+    def _tick(self) -> None:
+        done = self._clock.elapsed() >= self.duration
+        if done:
+            self._timer.stop()
+        self._apply(*self.position())
+        if done and self._on_done is not None:
+            self._on_done()
+
+
 class _FirstPaint(QObject):
     """One-shot event filter that starts a tween after the widget's first paint."""
 
