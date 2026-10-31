@@ -1,3 +1,3 @@
 """DesktopNote: minimalist glass sticky notes for the Windows desktop."""
 
-__version__ = "0.3.0"  # Keep in sync with pyproject.toml.
+__version__ = "1.0.0rc1"  # Keep in sync with pyproject.toml.
