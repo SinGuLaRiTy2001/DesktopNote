@@ -29,6 +29,7 @@ from PySide6.QtGui import (
     QConicalGradient,
     QCursor,
     QFont,
+    QFontMetrics,
     QFontMetricsF,
     QGuiApplication,
     QIcon,
@@ -65,6 +66,8 @@ from . import icons, motion, win_effects
 from .i18n import month_fields, tr
 from .models import Item
 from .theme import BODY_PT, DUE_PT, TAGS, TEXT_SCALES, TITLE_PT, Theme, is_hex, popup_qss
+
+DOC_MARGIN = 2  # Px between an item editor's edge and its text.
 
 # --- Helpers -----------------------------------------------------------------
 def reminder_state(item: Item, soon_minutes: int, now: datetime | None = None) -> str:
@@ -170,8 +173,8 @@ def _midline_offset(family: str, point_size: float, dpr: float) -> float:
 def glyph_midline_offset(font: QFont) -> float:
     """Returns how far the digits' visual middle sits below the centre of the font's line box.
 
-    The offset is measured from rendered glyphs because hinting makes font metrics drift. Icons
-    centred on a text line are moved down by this amount to sit on the text's midline.
+    Measured from rendered glyphs, because hinting makes font metrics drift. Icons centred on a
+    text line are moved down by this amount to sit on the text's midline.
     """
     screen = QGuiApplication.primaryScreen()
     dpr = screen.devicePixelRatio() if screen is not None else 1.0
@@ -208,7 +211,7 @@ class AutoTextEdit(QTextEdit):
         self.setTabChangesFocus(True)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setMinimumWidth(40)
-        self.document().setDocumentMargin(2)
+        self.document().setDocumentMargin(DOC_MARGIN)
         self.setPlaceholderText(placeholder)
         self.setPlainText(text)
         self.document().documentLayout().documentSizeChanged.connect(self._fit_height)
@@ -368,7 +371,6 @@ class ItemRow(QWidget):
         self._icon_px = self.ICON
         self._editor_qss = ""
         self._due_icon_px = self.DUE_ICON
-        self._due_dy = 0.0
         self._hover = 0.0  # Highlight level, eased.
         self._hover_tween: motion.Tween | None = None
         self._edit_level = 0.0  # 0..1, eased with edit mode; scales the delete button.
@@ -377,6 +379,7 @@ class ItemRow(QWidget):
         row = QHBoxLayout(self)
         row.setContentsMargins(self.PAD_X, self.PAD_Y, self.PAD_X, self.PAD_Y)
         row.setSpacing(4)
+        self._row_layout = row
 
         self.lead: QToolButton | None = None
         if item.type in ("todo", "reminder"):
@@ -474,6 +477,7 @@ class ItemRow(QWidget):
 
     LEAD_W, LEAD_H, ICON = 24, 21, 19  # At scale 1.0; see the lead button.
     DUE_ICON = 12
+    DUE_PAD_BOTTOM = 2  # The due button's bottom padding in note_qss.
     DUE_CHROME = 19  # Due label: 6 px left padding + Qt's icon/text spacing and margins (measured).
     ICON_FOLLOW = 0.6  # Icons grow with the text, a little less than it.
 
@@ -495,7 +499,6 @@ class ItemRow(QWidget):
             due = QFont(self.due_btn.font())
             due.setPointSizeF(DUE_PT * scale)
             self.due_btn.setFont(due)
-            self._due_dy = glyph_midline_offset(due)
             if (self.due_btn.sizeHint().height() - self._due_icon_px) % 2:  # Odd: icon on a half pixel.
                 self._due_icon_px += 1
             self.due_btn.setIconSize(QSize(self._due_icon_px, self._due_icon_px))
@@ -506,9 +509,15 @@ class ItemRow(QWidget):
             h = round(self.LEAD_H + 2 * (mid(QFontMetricsF(font)) - mid(QFontMetricsF(base))))
             if (h - self._icon_px) % 2:  # An odd leftover would put the icon on a half pixel.
                 self._icon_px += 1
-            self.lead.setFixedSize(round(self.LEAD_W * k), h)
+            w = round(self.LEAD_W * k)
+            w += (w - self._icon_px) % 2  # Even leftover: the icon centres on a whole pixel.
+            self.lead.setFixedSize(w, h)
             self.lead.setIconSize(QSize(self._icon_px, self._icon_px))
             self.lead.setProperty("hoverRadius", self.lead.width() / 2 - 2)
+            # Shifts the lead left so its circle starts where text items' text does.
+            ink = (w - self._icon_px) // 2 + icons.ink_box("checkbox_off", self._icon_px)[0]
+            shift = max(0, min(self.PAD_X, math.floor(ink - DOC_MARGIN + 0.5)))  # Halves round up.
+            self._row_layout.setContentsMargins(self.PAD_X - shift, self.PAD_Y, self.PAD_X, self.PAD_Y)
             self.refresh()
 
     def focus_editor(self, at_end: bool = True) -> None:
@@ -550,9 +559,32 @@ class ItemRow(QWidget):
                 "soon": ("clock", theme.orange),
                 "overdue": ("warning", theme.red),
             }[state]
-            self.lead.setIcon(icons.icon(name, color, self._icon_px))
+            self.lead.setIcon(self._lead_icon(name, color))
             self.lead.setToolTip(tr("item.mark_undone" if item.done else "item.mark_done"))
             self._refresh_due(state, now)
+
+    def _due_icon_dy(self) -> float:
+        """Returns how far to draw the calendar icon down so it sits on the label's midline.
+
+        Qt places the icon and the text separately, each rounded to whole pixels, and the icon
+        in a box DUE_PAD_BOTTOM px shorter (see note_qss).
+        """
+        font, ip = self.due_btn.font(), self._due_icon_px
+        height = self.due_btn.sizeHint().height()
+        text_mid = (height - QFontMetrics(font).height()) // 2 + QFontMetricsF(font).height() / 2
+        text_mid += glyph_midline_offset(font)
+        _, top, _, bottom = icons.ink_box("calendar", ip)
+        icon_mid = (height - self.DUE_PAD_BOTTOM - ip) // 2 + (top + bottom) / 2
+        return round((text_mid - icon_mid) * 2) / 2  # To half pixels.
+
+    def _lead_icon(self, name: str, color: str) -> QIcon:
+        """Returns a lead icon drawn so its ink centres where the to-do circle's does."""
+        _, top, _, bottom = icons.ink_box(name, self._icon_px)
+        _, c_top, _, c_bottom = icons.ink_box("checkbox_off", self._icon_px)
+        dy = round(((c_top + c_bottom) - (top + bottom)) / 2 * 2) / 2  # To half pixels.
+        qicon = QIcon()
+        qicon.addPixmap(icons.pixmap(name, color, self._icon_px, dy=dy))
+        return qicon
 
     def _refresh_due(self, state: str, now: datetime | None) -> None:
         """Updates the due button's label, tooltip, icon, state colour and width."""
@@ -571,8 +603,8 @@ class ItemRow(QWidget):
         color = {"soon": theme.orange, "overdue": theme.red}.get(state, theme.secondary)
         self.due_btn.setText(label)
         self.due_btn.setToolTip(tip)
-        due_icon = QIcon()  # Drawn _due_dy lower, onto the label's visual midline.
-        due_icon.addPixmap(icons.pixmap("calendar", color, self._due_icon_px, dy=self._due_dy))
+        due_icon = QIcon()
+        due_icon.addPixmap(icons.pixmap("calendar", color, self._due_icon_px, dy=self._due_icon_dy()))
         self.due_btn.setIcon(due_icon)
         if self.due_btn.property("state") != state:  # Re-polish for the state colour only on change.
             self.due_btn.setProperty("state", state)

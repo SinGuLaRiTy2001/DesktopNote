@@ -163,6 +163,22 @@ def _pixmap(name: str, color: str, size: int, dpr: float, dy: float) -> QPixmap:
     return pm
 
 
+@lru_cache(maxsize=64)
+def ink_box(name: str, size: int) -> tuple[float, float, float, float]:
+    """Returns an icon's ink as (left, top, right, bottom) in logical px, possibly fractional."""
+    img = pixmap(name, "#000000", size).toImage()
+    dpr = img.devicePixelRatio() or 1.0
+    xs, ys = [], []
+    for y in range(img.height()):
+        for x in range(img.width()):
+            if img.pixelColor(x, y).alpha() > 64:
+                xs.append(x)
+                ys.append(y)
+    if not xs:
+        return 0.0, 0.0, float(size), float(size)
+    return min(xs) / dpr, min(ys) / dpr, (max(xs) + 1) / dpr, (max(ys) + 1) / dpr
+
+
 def icon(name: str, color: str, size: int = 18) -> QIcon:
     """Returns an icon as a QIcon of the given logical size."""
     qicon = QIcon()

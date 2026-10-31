@@ -43,7 +43,7 @@ from .widgets import (
 EDGE = 7  # Width in px of the resize-sensitive border.
 CORNER = 16  # Larger grab zone at the corners.
 RADIUS = 8  # Matches Windows 11's corner rounding, so the painted border and DWM's clip coincide.
-MIN_SIZE = QSize(200, 150)
+MIN_SIZE = QSize(200, 150)  # Wider where the delete confirmation needs it.
 GLOW_HEIGHT = 44  # The tag colour fades out before the first row, so text contrast holds.
 GLOW_MS = 260  # Cross-fade when the tag changes.
 FLASH_MS = 900  # Pulse when a note is picked from the tray list.
@@ -408,6 +408,7 @@ class NoteWindow(QWidget):
         self.btn_confirm_delete.setText(tr("note.delete"))
         self.title_edit.setPlaceholderText(tr("note.title"))
         self.grabber.setToolTip(tr("note.drag"))
+        self._fit_minimum_width()
         self._update_placeholder()
         for row in self.rows:
             row.retranslate()
@@ -453,6 +454,18 @@ class NoteWindow(QWidget):
         lay.addWidget(self.btn_done)
         lay.addWidget(self.btn_more)
         return bar
+
+    def _fit_minimum_width(self) -> None:
+        """Keeps the note at least as wide as its delete confirmation in this language."""
+        bar = self.bottom.widget(1).layout()
+        margins, root = bar.contentsMargins(), self.layout().contentsMargins()
+        needed = (margins.left() + margins.right() + root.left() + root.right() + 2 * bar.spacing()
+                  + sum(w.sizeHint().width() for w in (self.confirm_label, self.btn_cancel, self.btn_confirm_delete)))
+        width = max(MIN_SIZE.width(), needed)
+        self.setMinimumWidth(width)
+        if self.note.w < width and self.dock.edge:  # The dock owns a docked note's geometry.
+            self.note.w = width
+            self.dock.validate()
 
     def _build_confirm(self) -> QWidget:
         bar = QWidget(self)
