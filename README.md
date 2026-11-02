@@ -30,6 +30,8 @@ stay exactly where you left them.
   away; it slides out when the cursor comes to it.
 - **Tray menu**: create notes, bring them all to the front, jump to one note by name, and change
   settings.
+- **Scripts and AI agents**: a command line shows notes as JSON, makes notes and adds, changes or
+  deletes items, so an agent can turn your email or calendar into to-dos and reminders.
 - **Settings**: theme (light, dark or match Windows), language (English or Simplified Chinese),
   text size for all notes, and start at login.
 - **Automatic saving**: changes are saved as you type, and the previous version is kept as a
@@ -99,6 +101,27 @@ In edit mode, add items with the buttons at the bottom of the note.
 - **Settings** stay open while you change them. **Open Data Folder** shows where your notes are
   stored.
 - **About DesktopNote** shows the version and a link to this repository.
+
+### Scripts and AI agents
+
+`desktopnote-cli.exe`, next to `DesktopNote.exe` (from source: `python -m desktopnote.cli`), lets
+scripts and AI agents manage notes and items, for example from your email or calendar. While DesktopNote runs,
+a change shows at once; otherwise it is saved for the next start.
+
+```
+desktopnote-cli notes                                            # every note: id, title, counts
+desktopnote-cli show Work                                        # one note and its items, with ids
+desktopnote-cli new-note --title Work                            # a note; --title is optional
+desktopnote-cli add todo "Reply to Anna" --note Work             # into "Work", made if missing
+desktopnote-cli add reminder "Dentist" --due "2026-11-05 09:00"  # into "Inbox"
+desktopnote-cli edit <item id> --text "Reply by Friday" --done   # also --due, --no-due, --undone
+desktopnote-cli delete <item id>                                 # delete one item
+```
+
+A note is named by its id or its title, so notes without a title work too. `list` prints every
+note with its items, and `done <item id>` is short for `edit <item id> --done`. Every command
+prints one JSON object, `{"ok": true, ...}` or `{"ok": false, "error": "..."}`, and exits with 0,
+1 on an error or 2 for invalid arguments.
 
 ## Data
 

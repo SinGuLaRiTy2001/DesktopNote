@@ -9,6 +9,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - An About window in the tray menu, with the version and developer.
 - Items can be reordered: click and hold one until it lifts, then drag it.
+- A command line for scripts and AI agents, `desktopnote-cli`: look at notes, make notes, and add,
+  change, tick or delete items. Changes show at once in the running app.
 
 ### Changed
 

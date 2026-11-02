@@ -690,6 +690,29 @@ class NoteWindow(GlassWindow):
         self._touch()
         return row
 
+    def show_new_item(self, item: Item) -> None:
+        """Shows an item that was just added to the end of the note, expanding it into view."""
+        row = self._add_row(item)
+        motion.expand_in(row)
+        QTimer.singleShot(0, row, lambda: self.scroll_indicator.ensure_visible(row, row.sizeHint().height()))
+
+    def refresh_item(self, item: Item) -> None:
+        """Shows the current text, due time and done state of an item changed from outside."""
+        for row in self.rows:
+            if row.item is item:
+                if row.editor.toPlainText() != item.text:
+                    row.editor.setPlainText(item.text)
+                row.refresh()
+
+    def forget_item(self, item: Item) -> None:
+        """Fades out the row of an item that was deleted from outside (already gone from the note)."""
+        for row in self.rows:
+            if row.item is item:
+                self.rows.remove(row)
+                motion.fade_out(row)  # Deletes the widget when done.
+                self.placeholder.setVisible(not self.rows)
+                return
+
     def _remove_row(self, row: ItemRow, deleted: bool = False) -> int:
         """Removes row and its item, animating the widget away; returns its former index.
 

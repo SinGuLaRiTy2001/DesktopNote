@@ -68,6 +68,14 @@ class ItemDeleteTest(unittest.TestCase):
         self.assertLess(self.row.maximumHeight(), height, "the rows below move up over it")
         self.assertEqual(self.row.x(), x, "it does not slide sideways")
 
+    def test_an_item_deleted_from_outside_fades_too(self):
+        item = self.row.item
+        self.win.note.items.remove(item)  # As the command line's delete does.
+        self.win.forget_item(item)
+        self.assertNotIn(self.row, self.win.rows)
+        QTest.qWait(140)
+        self.assertLess(self.row.graphicsEffect().opacity(), 1.0, "it fades like a deletion by hand")
+
     def test_a_double_click_on_the_x_does_not_delete(self):
         QTest.mouseClick(self.row.del_btn, Qt.LeftButton)
         QTest.qWait(60)

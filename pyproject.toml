@@ -24,5 +24,8 @@ build = ["pyinstaller>=6"]
 [project.gui-scripts]
 desktopnote = "desktopnote.app:main"
 
+[project.scripts]
+desktopnote-cli = "desktopnote.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["desktopnote*"]

@@ -1,5 +1,7 @@
 """Single instance: one DesktopNote runs per user (and data folder); a second launch shows its notes.
 
+The instance's local server also carries the command line's requests (cli.py, COMMAND_PREFIX).
+
 Imports only QtCore and QtNetwork, so a second launch can hand over before loading the app.
 """
 from __future__ import annotations
@@ -29,6 +31,8 @@ def _server_name() -> str:
 
 SERVER_NAME = _server_name()
 HANDOVER_WAIT_S = 5.0  # How long a second launch waits for an instance that is still starting.
+COMMAND_PREFIX = b"cmd "  # Starts a command-line request (cli.py); anything else means "show".
+SYNCHRONIZE = 0x00100000  # The least access right OpenMutexW needs to find the mutex.
 ERROR_ALREADY_EXISTS = 183
 
 _claimed: set[str] = set()
@@ -76,6 +80,20 @@ def _create_mutex(name: str) -> tuple[int, bool] | None:
     if not handle:
         return None
     return handle, ctypes.get_last_error() == ERROR_ALREADY_EXISTS
+
+
+def is_running(name: str = SERVER_NAME) -> bool:
+    """Returns whether an instance holds the claim, without claiming it (which would block one)."""
+    if sys.platform != "win32":
+        return False
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenMutexW.restype = ctypes.c_void_p
+    kernel32.OpenMutexW.argtypes = [ctypes.c_uint32, ctypes.c_bool, ctypes.c_wchar_p]
+    handle = kernel32.OpenMutexW(SYNCHRONIZE, False, f"Global\\{name}")
+    if not handle:
+        return False
+    ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(handle))
+    return True
 
 
 def signal_running_instance(name: str = SERVER_NAME) -> bool:

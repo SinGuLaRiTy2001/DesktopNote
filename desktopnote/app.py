@@ -1,21 +1,23 @@
 """Application controller: owns the store, note windows, tray icon and timers."""
 from __future__ import annotations
 
+import json
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
 from ctypes import wintypes
 from datetime import datetime
+from typing import Callable
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QRect, Qt, QTimer, QUrl
 from PySide6.QtGui import QCursor, QDesktopServices, QFont, QGuiApplication
-from PySide6.QtNetwork import QLocalServer
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidgetAction
 
-from . import __version__, i18n, icons, motion, win_effects
+from . import __version__, commands, i18n, icons, motion, win_effects
 from .about import AboutWindow
 from .i18n import tr
-from .instance import SERVER_NAME, claim
+from .instance import COMMAND_PREFIX, SERVER_NAME, claim
 from .models import Item, Note
 from .note_window import GlassMenu, NoteWindow, glass_menu
 from .storage import Store, data_dir
@@ -77,7 +79,7 @@ class DesktopNoteApp:
         tray_menu: The tray icon's context menu, rebuilt each time it opens.
     """
 
-    NEW_NOTE_W, NEW_NOTE_H = 300, 340
+    NEW_NOTE_W, NEW_NOTE_H = commands.NEW_NOTE_W, commands.NEW_NOTE_H
 
     def __init__(self, qapp: QApplication):
         self.qapp = qapp
@@ -215,9 +217,7 @@ class DesktopNoteApp:
             if beside is not None:
                 note.x, note.y = beside.x(), beside.y()
         else:
-            area = (QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()).availableGeometry()
-            note.x = area.center().x() - note.w // 2 + 24 * (len(self.windows) % 6)
-            note.y = area.center().y() - note.h // 2 + 24 * (len(self.windows) % 6)
+            self._centre(note)
         self.store.notes.append(note)
         win = self._open_window(note)
         win.bring_to_front()
@@ -225,6 +225,44 @@ class DesktopNoteApp:
         win.add_item("text")
         self.schedule_save()
         return win
+
+    def _centre(self, note: Note) -> None:
+        """Centres a new note on the screen under the cursor, offset from earlier new notes."""
+        area = (QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()).availableGeometry()
+        note.x = area.center().x() - note.w // 2 + 24 * (len(self.windows) % 6)
+        note.y = area.center().y() - note.h // 2 + 24 * (len(self.windows) % 6)
+
+    def handle_command(self, request: dict) -> dict:
+        """Carries out a command-line request (see cli.py) on the open notes and saves.
+
+        A new note opens like one made from the tray, an added item expands into its note, a
+        changed item updates in its window, and a deleted item fades out of it.
+
+        Args:
+            request: The request, as commands.run() takes it.
+
+        Returns:
+            The JSON-ready result.
+        """
+        try:
+            result, change = commands.run(request, self.store.notes)
+        except commands.CommandError as exc:
+            return {"ok": False, "error": str(exc)}
+        if change is None:
+            return result
+        if change.new_note:
+            self._centre(change.note)
+            self._open_window(change.note)
+        elif (win := self.windows.get(change.note.id)) is not None:
+            if change.action == "add":
+                win.show_new_item(change.item)
+            elif change.action == "edit":
+                win.refresh_item(change.item)
+            elif change.action == "delete":
+                win.forget_item(change.item)
+        self.save_now()
+        self.check_reminders()
+        return result
 
     def delete_note(self, win: NoteWindow) -> None:
         """Removes a note, fades its window out and saves at once."""
@@ -604,6 +642,35 @@ def _setup_logging() -> None:
     sys.excepthook = log_unhandled
 
 
+def answer(conn: QLocalSocket, handle_command: Callable[[dict], dict], show: Callable[[], None]) -> None:
+    """Answers a connection to the instance's local server.
+
+    A command-line request (cli.py: COMMAND_PREFIX, JSON, newline) gets a JSON reply line; any
+    other message comes from a second launch and shows the notes.
+
+    Args:
+        conn: The connected QLocalSocket.
+        handle_command: Called with a request dict; returns the reply dict.
+        show: Called for a second launch.
+    """
+    data = b""
+    while conn.waitForReadyRead(300):
+        data += bytes(conn.readAll())
+        if not data.startswith(COMMAND_PREFIX) or data.endswith(b"\n"):
+            break
+    if not data.startswith(COMMAND_PREFIX):
+        show()
+        return
+    try:
+        reply = handle_command(json.loads(data[len(COMMAND_PREFIX):]))
+    except ValueError:
+        reply = {"ok": False, "error": "unreadable request"}
+    conn.write(json.dumps(reply, ensure_ascii=False).encode("utf-8") + b"\n")
+    conn.flush()
+    conn.waitForBytesWritten(1000)
+    conn.disconnectFromServer()
+
+
 def main() -> int:
     """Runs DesktopNote, or wakes the instance that is already running.
 
@@ -637,12 +704,6 @@ def main() -> int:
 
     app = DesktopNoteApp(qapp)
 
-    def on_connection():
-        conn = server.nextPendingConnection()
-        conn.waitForReadyRead(300)
-        conn.readAll()
-        app.show_all()
-
-    server.newConnection.connect(on_connection)
+    server.newConnection.connect(lambda: answer(server.nextPendingConnection(), app.handle_command, app.show_all))
     app.start()
     return qapp.exec()
