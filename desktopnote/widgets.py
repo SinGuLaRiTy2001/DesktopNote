@@ -1481,6 +1481,9 @@ class OverlayScrollBar(QWidget):
     appears) and never shows up just because the note was resized. It fades in while scrolling,
     widens under the pointer, can be dragged, and fades out shortly after scrolling stops.
 
+    It also scrolls the area smoothly: the wheel, a click on the track and ensure_visible() glide
+    the content and the handle to their new position; dragging the handle follows the pointer.
+
     Attributes:
         area: The scroll area this indicator belongs to.
         theme: The theme used for drawing.
@@ -1492,6 +1495,9 @@ class OverlayScrollBar(QWidget):
     MARGIN = 2
     MIN_HANDLE = 28
     HOLD_MS, FADE_IN_MS, FADE_OUT_MS = 900, 120, 260
+    SCROLL_MS = 220
+    LINE_PX = 20  # One wheel line; a notch scrolls QApplication.wheelScrollLines() lines.
+    VISIBLE_MARGIN = 12  # Room kept around a row that ensure_visible() brings into view.
 
     def __init__(self, area: QScrollArea, theme: Theme):
         """Attaches the indicator to ``area``, whose own vertical scroll bar should be off."""
@@ -1502,6 +1508,8 @@ class OverlayScrollBar(QWidget):
         self._hot = 0.0  # Pointer over it or dragging: wider and darker.
         self._fx: dict[str, motion.Tween] = {}
         self._drag: float | None = None  # Pointer offset inside the handle.
+        self._glide = motion.WindowGlide(self, self.SCROLL_MS, self._glide_step, motion.EASE_OUT)
+        self._gliding_value = False  # True while the glide itself sets the bar's value.
         self._resized = QElapsedTimer()
         self._resized.start()
         self._hold = QTimer(self, singleShot=True, interval=self.HOLD_MS)
@@ -1549,10 +1557,75 @@ class OverlayScrollBar(QWidget):
             self._to("hot", 0.0, self.FADE_OUT_MS)
 
     def _scrolled(self, _value: int) -> None:
-        """Flashes the indicator on a scroll, but not on value changes caused by a resize."""
+        """Flashes the indicator on a scroll, but not on value changes caused by a resize.
+
+        A value set by anything but the glide (dragging, keyboard focus) stops the glide.
+        """
+        if not self._gliding_value:
+            self._glide.stop()
         if self._resized.elapsed() > 200:  # A resize clamping the value is not scrolling.
             self.flash()
         self.update()
+
+    # --- Smooth scrolling ----------------------------------------------------
+    def scroll_to(self, value: float) -> None:
+        """Glides the content to scroll position ``value`` (not below 0).
+
+        A target beyond the current range is kept, so while the content is still growing (a row
+        expanding at the end) the view follows it down.
+        """
+        value = max(0.0, value)
+        here = self.bar.value()
+        heading = self._glide.target[1] if self._glide.is_running() else here
+        if round(value) == round(heading):  # Already there, or already on the way.
+            return
+        self._glide.start((0, here), (0, value))
+
+    def scroll_by(self, delta: float) -> None:
+        """Glides the content ``delta`` pixels on from where it is heading, within the range."""
+        base = self._glide.target[1] if self._glide.is_running() else self.bar.value()
+        self.scroll_to(min(max(0.0, base + delta), self.bar.maximum()))
+
+    def ensure_visible(self, w: QWidget, height: int | None = None) -> None:
+        """Glides the content so that ``w`` is in view, with a little room around it.
+
+        Args:
+            w: A widget inside the area's content.
+            height: The height ``w`` will have, if it is still growing; defaults to its height.
+        """
+        content = self.area.widget()
+        top = w.mapTo(content, QPoint(0, 0)).y()
+        h = w.height() if height is None else height
+        view = self.area.viewport().height()
+        margin = max(0, min(self.VISIBLE_MARGIN, (view - h) // 2))
+        base = self._glide.target[1] if self._glide.is_running() else self.bar.value()
+        value = base
+        if top + h + margin > value + view:
+            value = top + h + margin - view
+        if top - margin < value:  # A row taller than the view shows its top.
+            value = top - margin
+        self.scroll_to(value)
+
+    def _wheel(self, e) -> None:
+        """Turns a wheel or touchpad event into a glide; a notch scrolls at most one page."""
+        if self._drag is not None:
+            return
+        if not e.pixelDelta().isNull():
+            delta = -e.pixelDelta().y()
+        else:
+            step = min(max(1, QApplication.wheelScrollLines()) * self.LINE_PX, self.bar.pageStep())
+            delta = -e.angleDelta().y() / 120 * step
+        if delta:
+            self.flash()
+            self.scroll_by(delta)
+
+    def _glide_step(self, _x: int, y: int) -> None:
+        """Sets the bar's value for one frame of the glide."""
+        self._gliding_value = True
+        try:
+            self.bar.setValue(y)
+        finally:
+            self._gliding_value = False
 
     def _place(self) -> None:
         """Places the indicator along the area's right edge; visible only when it can scroll."""
@@ -1563,13 +1636,14 @@ class OverlayScrollBar(QWidget):
         self.update()
 
     def eventFilter(self, obj, ev):
-        """Re-places the indicator on area resizes and flashes it on wheel events."""
+        """Re-places the indicator on area resizes and scrolls smoothly on wheel events."""
         kind = ev.type()
         if kind == QEvent.Resize and obj is self.area:
             self._resized.restart()
             self._place()
         elif kind == QEvent.Wheel:
-            self.flash()
+            self._wheel(ev)
+            return True  # The area's own wheel handling would jump.
         return False
 
     # --- Geometry ------------------------------------------------------------
@@ -1599,9 +1673,10 @@ class OverlayScrollBar(QWidget):
         handle = self._handle()
         y = e.position().y()
         if handle.top() <= y <= handle.bottom():
+            self._glide.stop()
             self._drag = y - handle.top()
         else:  # On the track: one page towards the pointer.
-            self.bar.setValue(self.bar.value() + (self.bar.pageStep() if y > handle.bottom() else -self.bar.pageStep()))
+            self.scroll_by(self.bar.pageStep() if y > handle.bottom() else -self.bar.pageStep())
         self.flash()
 
     def mouseMoveEvent(self, e):

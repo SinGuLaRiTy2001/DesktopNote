@@ -100,10 +100,10 @@ def display_frame_ms() -> int:
 
 
 class WindowGlide(QObject):
-    """Glides a window to a target: its offset from the target eases away to nothing.
+    """Glides a position, such as a window's or a scroll position, to a target.
 
-    The target may move during the glide, and position() is always current. Frames follow the
-    display's refresh rate.
+    The offset from the target eases away to nothing. The target may move during the glide, and
+    position() is always current. Frames follow the display's refresh rate.
 
     Attributes:
         duration: Length of a glide in milliseconds.

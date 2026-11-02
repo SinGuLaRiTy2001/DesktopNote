@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Scrolling a note glides smoothly: the wheel, a click on the scroll track and a new row coming into view.
+
 ## [1.0.0rc1] - 2026-10-31
 
 ### Added

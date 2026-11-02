@@ -580,8 +580,9 @@ class NoteWindow(QWidget):
         self.note.items.insert(index, item)
         row = self._add_row(item, index)
         row.focus_editor()
-        motion.expand_in(row, on_done=lambda: self.scroll.ensureWidgetVisible(row))
-        QTimer.singleShot(0, lambda: self.scroll.ensureWidgetVisible(row))
+        motion.expand_in(row, on_done=lambda: self.scroll_indicator.ensure_visible(row))
+        # Glide towards the row's full height while it expands; the view follows it down.
+        QTimer.singleShot(0, row, lambda: self.scroll_indicator.ensure_visible(row, row.sizeHint().height()))
         self._touch()
         return row
 
