@@ -129,11 +129,22 @@ class Theme:
         """Returns the base glass colour as a QColor."""
         return QColor(self.base)
 
+    def lifted_color(self) -> str:
+        """Returns the colour that tints an item row lifted for a drag, at LIFTED_ALPHA.
+
+        A raised surface reads lighter than the glass: the light base already is lighter, the
+        dark base is mixed a step towards the text colour (checked in tests/test_contrast.py).
+        """
+        return blend(self.text, LIFTED_DARK_TINT, self.base) if self.dark else self.base
+
     def acrylic_rgba(self) -> int:
         """Returns the acrylic tint packed as 0xRRGGBBAA (base colour plus glass_alpha)."""
         glass = self.glass_color()
         return (glass.red() << 24) | (glass.green() << 16) | (glass.blue() << 8) | self.glass_alpha
 
+
+LIFTED_DARK_TINT = 0.18  # Text colour mixed into the dark base for a lifted row.
+LIFTED_ALPHA = 0.55  # The lifted row's tint over its frosted backdrop: the glass shows through.
 
 LIGHT = Theme(
     dark=False,

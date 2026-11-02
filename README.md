@@ -19,6 +19,7 @@ stay exactly where you left them.
 - **Glass notes**: notes blur the desktop behind them, follow Windows' light or dark mode, and
   stay readable on any wallpaper.
 - **Three kinds of items**: free text, to-dos you tick off, and reminders with a date and time.
+  Click and hold an item to lift it, then drag it to reorder.
 - **Reminders**: a reminder turns orange when it is due within the hour, and a Windows
   notification appears when it is due.
 - **Colour tags**: tint a note with one of the preset colours or any custom colour, so notes
@@ -86,6 +87,7 @@ In edit mode, add items with the buttons at the bottom of the note.
 | Line break | `Enter` in a text item; `Shift` + `Enter` in a to-do or reminder |
 | Remove an empty item | `Backspace` on an empty item |
 | Delete an item | Hover over it and tap the **×** on the right |
+| Reorder items | Click and hold an item until it lifts, then drag it up or down (also outside edit mode) |
 | Tick a to-do | Tap the circle on the left |
 | Set a reminder's time | Tap **Add Time** (or the date) and pick a day and time; **Remove Time** clears it |
 

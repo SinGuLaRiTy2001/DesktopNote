@@ -27,6 +27,7 @@ from .i18n import tr
 from .models import Item, Note, now_iso
 from .docking import EdgeDock
 from .glass import GlassWindow
+from .reorder import RowReorder
 from .snapping import SnapMove
 from .theme import BODY_PT, Theme, glow_color, menu_qss, note_qss, tag_color
 from .widgets import (
@@ -366,6 +367,8 @@ class NoteWindow(GlassWindow):
         self.scroll.setWidget(self.content)
         root.addWidget(self.scroll, 1)
         self.scroll_indicator = OverlayScrollBar(self.scroll, theme)
+        self.reorder = RowReorder(self.scroll, self.content_lay, self.scroll_indicator)
+        self.reorder.moved.connect(self._move_row)
 
         self.sep = QFrame(self)
         self.sep.setObjectName("separator")
@@ -516,6 +519,10 @@ class NoteWindow(GlassWindow):
         row.editRequested.connect(lambda: self.set_editing(True))
         row.finishEditing.connect(lambda: self.set_editing(False))
         row.dueClicked.connect(self._pick_due)
+        row.dragStarted.connect(lambda r, pointer: self.reorder.start(self.rows, r, pointer))
+        row.dragMoved.connect(self.reorder.move)
+        row.dragFinished.connect(self.reorder.finish)
+        row.holdStarted.connect(lambda _row: self.reorder.prepare())
         if index is None:
             index = len(self.rows)
         # Anchors on the neighbouring row rather than on index, because rows still collapsing
@@ -566,6 +573,23 @@ class NoteWindow(GlassWindow):
         self._touch()
         return idx
 
+    def _move_row(self, row: ItemRow, before: ItemRow | None) -> None:
+        """Moves ``row`` (and its item) in front of ``before``, or to the end, as dropped.
+
+        Rows removed since the drag began are skipped; a removed ``before`` means the end.
+        """
+        if row not in self.rows:
+            return
+        self.rows.remove(row)
+        self.rows.insert(self.rows.index(before) if before in self.rows else len(self.rows), row)
+        self.note.items = [r.item for r in self.rows]
+        first = min(self.content_lay.indexOf(r) for r in self.rows)
+        for r in self.rows:
+            self.content_lay.removeWidget(r)
+        for i, r in enumerate(self.rows):
+            self.content_lay.insertWidget(first + i, r)
+        self._touch()
+
     def _delete_row(self, row: ItemRow) -> None:
         self._remove_row(row)
 
@@ -614,6 +638,7 @@ class NoteWindow(GlassWindow):
         Leaving editing mode removes empty rows and folds the title away if it is blank.
         """
         self.editing = editing
+        self.reorder.finish(animate=False)  # A held row drops at once, before empty rows go.
         if not editing:
             for row in [row for row in self.rows if not row.item.text.strip()]:
                 self._remove_row(row)

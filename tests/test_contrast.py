@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from desktopnote.theme import (  # noqa: E402
-    DARK, GLOW_PILL_FACTOR, GLOW_TITLE_FACTOR, LIGHT, TAGS, blend, glow_color,
+    DARK, GLOW_PILL_FACTOR, GLOW_TITLE_FACTOR, LIFTED_ALPHA, LIGHT, TAGS, blend, glow_color,
 )
 
 EXTREME_CUSTOM = ["#000000", "#FFFFFF", "#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#808080", "#1B2A5A", "#FFF6DC"]
@@ -71,6 +71,8 @@ class ContrastTest(unittest.TestCase):
             m = MEASURED[name]
             menu = [over(t.menu_bg, "#000000"), over(t.menu_bg, "#ffffff")]
             menu_hovered = [over(t.menu_hover, bg) for bg in menu]  # The grey row highlight.
+            # A row held for a drag: its tint over the (frosted) glass replaces the highlight.
+            lifted = [blend(t.lifted_color(), LIFTED_ALPHA, bg) for bg in m["rows"]]
             self.check(t, [
                 ("text, title", t.text, m["rows"], TEXT),
                 ("secondary text: done items, due dates, hints, title placeholder", t.secondary, m["rows"], TEXT),
@@ -79,6 +81,11 @@ class ContrastTest(unittest.TestCase):
                 ("Done button (accent)", t.accent, m["rows"], TEXT),
                 ("toolbar and row icons (secondary)", t.secondary, m["rows"], UI),
                 ("small icons: row delete, untagged ring (tertiary)", t.tertiary, m["rows"], UI),
+                ("lifted row: text", t.text, lifted, TEXT),
+                ("lifted row: done items, due dates (secondary)", t.secondary, lifted, TEXT),
+                ("lifted row: due soon (orange)", t.orange, lifted, TEXT),
+                ("lifted row: overdue (red)", t.red, lifted, TEXT),
+                ("lifted row: done check (tertiary)", t.tertiary, lifted, UI),
                 ("drag pill / pin, untagged (tertiary)", t.tertiary, m["pill_untagged"], UI),
                 ("popup text", t.text, m["popup"], TEXT),
                 ("popup secondary text, weekdays", t.secondary, m["popup"], TEXT),

@@ -8,6 +8,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ### Added
 
 - An About window in the tray menu, with the version and developer.
+- Items can be reordered: click and hold one until it lifts, then drag it.
 
 ### Changed
 

@@ -202,6 +202,32 @@ def grab_screen(rect: QRect) -> QPixmap | None:
     return None if pm.isNull() else pm
 
 
+def blur(pm: QPixmap, radius: float) -> QPixmap:
+    """Returns a blurred copy of ``pm``, the same size and device pixel ratio.
+
+    Args:
+        pm: The pixmap to blur.
+        radius: Blur radius in device-independent pixels.
+    """
+    dpr = pm.devicePixelRatio()
+    source = QPixmap(pm)
+    source.setDevicePixelRatio(1.0)
+    item = QGraphicsPixmapItem(source)
+    effect = QGraphicsBlurEffect()
+    effect.setBlurRadius(radius * dpr)
+    effect.setBlurHints(QGraphicsBlurEffect.QualityHint)
+    item.setGraphicsEffect(effect)
+    scene = QGraphicsScene()
+    scene.addItem(item)
+    out = QPixmap(source.size())
+    out.fill(Qt.transparent)
+    p = QPainter(out)
+    scene.render(p, QRectF(out.rect()), QRectF(source.rect()))
+    p.end()
+    out.setDevicePixelRatio(dpr)
+    return out
+
+
 def blurred_backdrop(rect: QRect, tint: QColor, radius: int = BLUR_RADIUS) -> QPixmap | None:
     """Returns a blurred, tinted snapshot of the screen behind rect.
 
@@ -219,23 +245,13 @@ def blurred_backdrop(rect: QRect, tint: QColor, radius: int = BLUR_RADIUS) -> QP
     pm = grab_screen(rect.adjusted(-pad, -pad, pad, pad))
     if pm is None:
         return None
-    dpr = pm.devicePixelRatio()
-    pm.setDevicePixelRatio(1.0)
-    item = QGraphicsPixmapItem(pm)
-    effect = QGraphicsBlurEffect()
-    effect.setBlurRadius(radius * dpr)
-    effect.setBlurHints(QGraphicsBlurEffect.QualityHint)
-    item.setGraphicsEffect(effect)
-    scene = QGraphicsScene()
-    scene.addItem(item)
-    out = QPixmap(pm.size())
-    out.fill(Qt.transparent)
+    out = blur(pm, radius)
+    dpr = out.devicePixelRatio()
     p = QPainter(out)
-    scene.render(p, QRectF(out.rect()), QRectF(pm.rect()))
-    p.fillRect(out.rect(), tint)
+    p.fillRect(QRectF(0, 0, out.width() / dpr, out.height() / dpr), tint)
     p.end()
     pad_px = round(pad * dpr)
-    out = out.copy(pad_px, pad_px, pm.width() - 2 * pad_px, pm.height() - 2 * pad_px)
+    out = out.copy(pad_px, pad_px, out.width() - 2 * pad_px, out.height() - 2 * pad_px)
     out.setDevicePixelRatio(dpr)
     return out
 

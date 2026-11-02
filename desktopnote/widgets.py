@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta
 from functools import lru_cache
 
 from PySide6.QtCore import (
+    QEasingCurve,
     QElapsedTimer,
     QEvent,
     QPoint,
@@ -47,6 +48,7 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
     QFrame,
+    QGraphicsDropShadowEffect,
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
@@ -65,7 +67,7 @@ from PySide6.QtWidgets import (
 from . import icons, motion, win_effects
 from .i18n import month_fields, tr
 from .models import Item
-from .theme import BODY_PT, DUE_PT, TAGS, TEXT_SCALES, TITLE_PT, Theme, is_hex, popup_qss
+from .theme import BODY_PT, DUE_PT, LIFTED_ALPHA, TAGS, TEXT_SCALES, TITLE_PT, Theme, is_hex, popup_qss
 
 DOC_MARGIN = 2  # Px between an item editor's edge and its text.
 
@@ -329,6 +331,12 @@ class ItemRow(QWidget):
     Hovering eases in a soft rounded highlight; in edit mode the delete button fades in and out
     with it.
 
+    A press on the text or background held still for HOLD_MS lifts the row, in either mode, and
+    emits the drag signals; the note then moves it (see reorder.RowReorder). From HINT_MS on, a
+    translucent tint fills in as the hold builds up, so the row shows it is about to move; moving
+    or releasing sooner lets it fade back, and moving selects text as usual. Lifted, the row is a
+    pane of frosted glass: the note hands it a blurred view of what lies beneath (set_backdrop).
+
     Attributes:
         item: The model item shown by this row.
         theme: The current theme.
@@ -347,9 +355,21 @@ class ItemRow(QWidget):
         editRequested: Emitted when a double click asks to enter edit mode.
         finishEditing: Emitted when Escape asks to leave edit mode.
         dueClicked: Emitted with the row when its due-time button is clicked.
+        dragStarted: Emitted with the row and the global pointer position once a press has been
+            held long enough.
+        dragMoved: Emitted with the global pointer position while the row is dragged.
+        dragFinished: Emitted when the dragged row is released.
+        holdStarted: Emitted with the row when a press has been held long enough to show the
+            build-up, before anything has changed on screen.
     """
 
     PAD_X, PAD_Y = 4, 2  # Room for the highlight around the content.
+    HOLD_MS = 500  # A press held still this long starts a drag (the usual long-press time).
+    HINT_MS = 150  # The hold shows from here on, so plain clicks never flicker.
+    HINT_LIFT = 0.6  # Lift level the hold builds up to; reaching 1 means the row moves.
+    RISE_MS, SETTLE_MS = 220, 260  # Lifting for a drag, and settling back after the drop.
+    SHADOW_BLUR, SHADOW_DY = 18, 4  # At full lift; both grow from 0 as the row rises.
+    SHADOW_ALPHA = {False: 0.18, True: 0.45}  # By theme.dark: light glass needs a fainter one.
     RADIUS = 7
     HOVER_STRENGTH = 0.6  # Fraction of theme.hover: softer than a button, whose hover stacks on top.
 
@@ -360,6 +380,10 @@ class ItemRow(QWidget):
     editRequested = Signal()
     finishEditing = Signal()
     dueClicked = Signal(object)
+    dragStarted = Signal(object, QPoint)
+    dragMoved = Signal(QPoint)
+    dragFinished = Signal()
+    holdStarted = Signal(object)
 
     def __init__(self, item: Item, theme: Theme, soon_minutes: int, parent=None):
         super().__init__(parent)
@@ -374,6 +398,16 @@ class ItemRow(QWidget):
         self._hover_tween: motion.Tween | None = None
         self._edit_level = 0.0  # 0..1, eased with edit mode; scales the delete button.
         self._edit_tween: motion.Tween | None = None
+        self._lift = 0.0  # Hold build-up (to HINT_LIFT) and drag (1), eased: the lifted look.
+        self._lift_tween: motion.Tween | None = None
+        self._press: QPoint | None = None  # Global position of a press that may become a drag.
+        self._dragging = False
+        self._hold = QTimer(self, singleShot=True, interval=self.HOLD_MS)
+        self._hold.timeout.connect(self._start_drag)
+        self._hint = QTimer(self, singleShot=True, interval=self.HINT_MS)
+        self._hint.timeout.connect(self._show_hold)
+        self._shadow: QGraphicsDropShadowEffect | None = None  # Only while lifted for a drag.
+        self._backdrop: QPixmap | None = None  # Frosted view of what lies beneath, while lifted.
 
         row = QHBoxLayout(self)
         row.setContentsMargins(self.PAD_X, self.PAD_Y, self.PAD_X, self.PAD_Y)
@@ -402,6 +436,7 @@ class ItemRow(QWidget):
         self.editor.backspaceOnEmpty.connect(lambda: self.focusPrevious.emit(self))
         self.editor.editRequested.connect(self.editRequested)
         self.editor.escapePressed.connect(self.finishEditing)
+        self.editor.viewport().installEventFilter(self)  # A press on the text may become a drag.
         col.addWidget(self.editor)
 
         self.due_btn: QToolButton | None = None
@@ -468,9 +503,49 @@ class ItemRow(QWidget):
         self._edit_tween = motion.Tween(self, motion.HoverFx.IN_MS if editing else motion.HoverFx.OUT_MS, step)
         self._edit_tween.start()
 
+    def set_lifted(self, lifted: bool) -> None:
+        """Eases the dragged look in or out: a frosted, raised pane and a soft shadow."""
+        if lifted and self._shadow is None:
+            self._shadow = QGraphicsDropShadowEffect(self)
+            self.setGraphicsEffect(self._shadow)
+            self._sync_shadow()
+        self._ease("_lift", 1.0 if lifted else 0.0, self.RISE_MS if lifted else self.SETTLE_MS)
+
+    def set_backdrop(self, pm: QPixmap | None) -> None:
+        """Sets the blurred view of what lies beneath the row, shown while it is lifted."""
+        self._backdrop = pm
+        self.update()
+
+    def _rise(self) -> float:
+        """Returns how far the row has risen: 0 up to the hold's build-up, 1 when lifted."""
+        return max(0.0, (self._lift - self.HINT_LIFT) / (1.0 - self.HINT_LIFT))
+
+    def _sync_shadow(self) -> None:
+        """Grows the shadow with the lift beyond the hold's build-up; drops it once gone.
+
+        Its size, softness and offset grow together, so the row visibly rises off the note and
+        sinks back.
+        """
+        if self._shadow is None:
+            return
+        level = self._rise()
+        if level <= 0.0 and not self._dragging:
+            self.setGraphicsEffect(None)  # Deletes the effect.
+            self._shadow = None
+            self._backdrop = None
+            return
+        color = QColor(0, 0, 0)
+        color.setAlphaF(self.SHADOW_ALPHA[self.theme.dark] * level)
+        self._shadow.setColor(color)
+        self._shadow.setBlurRadius(self.SHADOW_BLUR * level)
+        self._shadow.setOffset(0, self.SHADOW_DY * level)
+
     def _sync_delete(self) -> None:
-        """Shows the delete button only while editing, at the highlight's opacity."""
-        level = self._hover * self._edit_level
+        """Shows the delete button only while editing, at the highlight's opacity.
+
+        It fades out as the row lifts for a drag.
+        """
+        level = self._hover * self._edit_level * (1.0 - self._lift)
         self._del_fx.setOpacity(level)
         self.del_btn.setVisible(level > 0.0)
 
@@ -632,38 +707,139 @@ class ItemRow(QWidget):
         self.refresh()
         self.changed.emit()
 
-    def _hover_to(self, target: float, duration: int) -> None:
-        """Eases the hover highlight level to ``target`` over ``duration`` milliseconds."""
-        if self._hover_tween is not None:
-            self._hover_tween.stop()
-        start = self._hover
+    def _ease(self, attr: str, target: float, duration: int, easing=motion.EASE_OUT) -> None:
+        """Eases the level ``attr`` ("_hover" or "_lift") to ``target``."""
+        tween = getattr(self, attr + "_tween")
+        if tween is not None:
+            tween.stop()
+        start = getattr(self, attr)
 
         def step(v: float) -> None:
-            self._hover = start + (target - start) * v
+            setattr(self, attr, start + (target - start) * v)
             self._sync_delete()
+            self._sync_shadow()
             self.update()
 
-        self._hover_tween = motion.Tween(self, duration, step)
-        self._hover_tween.start()
+        tween = motion.Tween(self, duration, step, easing=easing)
+        setattr(self, attr + "_tween", tween)
+        tween.start()
 
     def enterEvent(self, e):
-        self._hover_to(1.0, motion.HoverFx.IN_MS)
+        self._ease("_hover", 1.0, motion.HoverFx.IN_MS)
         super().enterEvent(e)
 
     def leaveEvent(self, e):
-        self._hover_to(0.0, motion.HoverFx.OUT_MS)
+        self._ease("_hover", 0.0, motion.HoverFx.OUT_MS)
         super().leaveEvent(e)
 
-    def paintEvent(self, _):
-        if self._hover <= 0.0:
+    # --- Hold and drag -------------------------------------------------------
+    def _pressed(self, e) -> None:
+        """Arms the hold, and its build-up, on a left press (in either mode)."""
+        if e.button() == Qt.LeftButton:
+            self._press = e.globalPosition().toPoint()
+            self._hold.start()
+            self._hint.start()
+
+    def _moved(self, e) -> bool:
+        """Drags the row, or cancels a pending hold once the pointer moves; True if consumed."""
+        if self._dragging:
+            self.dragMoved.emit(e.globalPosition().toPoint())
+            return True
+        if self._press is not None:
+            if (e.globalPosition().toPoint() - self._press).manhattanLength() > QApplication.startDragDistance():
+                self._cancel_hold()  # Moving early selects text instead.
+        return False
+
+    def _show_hold(self) -> None:
+        """Starts the hold's build-up, once the press has lasted HINT_MS."""
+        self.holdStarted.emit(self)
+        self._ease("_lift", self.HINT_LIFT, self.HOLD_MS - self.HINT_MS, QEasingCurve.InOutQuad)
+
+    def _cancel_hold(self) -> None:
+        """Forgets a pending hold and lets its build-up fade back."""
+        self._hold.stop()
+        self._hint.stop()
+        self._press = None
+        if self._lift > 0.0 and not self._dragging:
+            self._ease("_lift", 0.0, self.SETTLE_MS)
+
+    def _released(self, e) -> bool:
+        """Drops a dragged row or forgets a pending hold; True if consumed."""
+        if e.button() != Qt.LeftButton:
+            return False
+        if not self._dragging:
+            self._cancel_hold()
+            return False
+        self._press = None
+        self._dragging = False
+        self.unsetCursor()
+        self.editor.viewport().setCursor(Qt.IBeamCursor if self.editing else Qt.ArrowCursor)
+        self.dragFinished.emit()
+        return True
+
+    def _start_drag(self) -> None:
+        """Starts the drag once a press has been held still for HOLD_MS."""
+        if self._press is None:
             return
-        color = css_color(self.theme.hover)
-        color.setAlphaF(color.alphaF() * self.HOVER_STRENGTH * self._hover)
+        self._dragging = True
+        # Drops any selection the press began; the caret stays where the press was.
+        self.editor.setTextCursor(self.editor.cursorForPosition(self.editor.viewport().mapFromGlobal(self._press)))
+        self.setCursor(Qt.ClosedHandCursor)
+        self.editor.viewport().setCursor(Qt.ClosedHandCursor)
+        self.dragStarted.emit(self, QCursor.pos())
+
+    def eventFilter(self, obj, ev):
+        """Watches presses on the text, which keeps its own mouse handling unless dragged."""
+        kind = ev.type()
+        if kind == QEvent.MouseButtonPress:
+            self._pressed(ev)
+        elif kind == QEvent.MouseMove:
+            return self._moved(ev)
+        elif kind == QEvent.MouseButtonRelease:
+            return self._released(ev)
+        return False
+
+    def mousePressEvent(self, e):
+        self._pressed(e)
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if not self._moved(e):
+            super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if not self._released(e):
+            super().mouseReleaseEvent(e)
+
+    def paintEvent(self, _):
+        """Paints the hover highlight, or the frosted pane while the row is held or dragged."""
+        if self._hover <= 0.0 and self._lift <= 0.0:
+            return
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(Qt.NoPen)
-        p.setBrush(color)
-        p.drawRoundedRect(QRectF(self.rect()), self.RADIUS, self.RADIUS)
+        rect = QRectF(self.rect())
+        if self._lift > 0.0:
+            path = QPainterPath()
+            path.addRoundedRect(rect, self.RADIUS, self.RADIUS)
+            rise = self._rise()
+            if self._backdrop is not None and rise > 0.0:
+                # Frosted glass: rows gliding underneath show only as soft shapes, not as text.
+                p.save()
+                p.setClipPath(path)
+                p.setOpacity(rise)
+                p.drawPixmap(rect.toRect(), self._backdrop)
+                p.restore()
+            tint = QColor(self.theme.lifted_color())
+            tint.setAlphaF(LIFTED_ALPHA * self._lift)
+            p.fillPath(path, tint)
+        # The highlight gives way to the frosted pane as the row lifts.
+        strength = self.HOVER_STRENGTH * self._hover * (1.0 - self._lift)
+        if strength > 0.0:
+            color = css_color(self.theme.hover)
+            color.setAlphaF(color.alphaF() * strength)
+            p.setBrush(color)
+            p.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
 
 
 # --- Tooltips ----------------------------------------------------------------
