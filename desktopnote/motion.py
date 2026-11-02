@@ -8,11 +8,12 @@ Windows drops a window's acrylic while its opacity is below 1, so the transition
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QEasingCurve, QElapsedTimer, QEvent, QObject, QPoint, QRect, QRectF, Qt, QTimer
+from PySide6.QtCore import QEasingCurve, QElapsedTimer, QEvent, QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
     QAbstractButton,
     QGraphicsBlurEffect,
+    QGraphicsEffect,
     QGraphicsOpacityEffect,
     QGraphicsPixmapItem,
     QGraphicsScene,
@@ -30,6 +31,7 @@ HANDOVER_MS = 180  # Blurred snapshot -> live acrylic.
 CROSSFADE_MS = 250  # Theme or language switch.
 ITEM_IN_MS = 200  # Text, todo and reminder rows.
 ITEM_OUT_MS = 160
+MODE_MS = 240  # Switching between viewing and editing.
 ITEM_DELETE_MS = 280  # A deleted row fading while the rows below cover it.
 BLUR_RADIUS = 28
 FRAME_MS = 16
@@ -365,6 +367,45 @@ def collapse_out(w: QWidget, duration: int = ITEM_OUT_MS) -> None:
         effect.setOpacity(1.0 - v)
 
     _run_item_tween(w, Tween(w, duration, step, w.deleteLater))
+
+
+class ShiftFade(QGraphicsEffect):
+    """Draws its widget shifted and faded, e.g. a button rising into place as it fades in.
+
+    Children with an effect of their own are left out, as with any widget effect.
+
+    Attributes:
+        dx: The horizontal shift in px.
+        dy: The vertical shift in px.
+    """
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.dx, self.dy, self._opacity = 0.0, 0.0, 1.0
+
+    def opacity(self) -> float:
+        """Returns the opacity, 0..1 (as QGraphicsOpacityEffect.opacity())."""
+        return self._opacity
+
+    def set(self, opacity: float, dx: float = 0.0, dy: float = 0.0) -> None:
+        """Sets the opacity and shift, and repaints."""
+        self._opacity, self.dx, self.dy = opacity, dx, dy
+        self.update()
+
+    def boundingRectFor(self, rect: QRectF) -> QRectF:
+        return rect.adjusted(min(0.0, self.dx), min(0.0, self.dy), max(0.0, self.dx), max(0.0, self.dy))
+
+    def draw(self, p: QPainter) -> None:
+        # drawSource() would ignore the painter's offset and opacity for a widget, so the widget's
+        # pixmap is drawn instead (as QGraphicsOpacityEffect does).
+        if self._opacity <= 0.0:
+            return
+        pm = self.sourcePixmap(Qt.LogicalCoordinates, mode=QGraphicsEffect.NoPad)
+        at = self.sourceBoundingRect(Qt.LogicalCoordinates).topLeft()
+        p.save()
+        p.setOpacity(self._opacity)
+        p.drawPixmap(at + QPointF(self.dx, self.dy), pm)
+        p.restore()
 
 
 def fade_out(w: QWidget, duration: int = ITEM_DELETE_MS) -> None:

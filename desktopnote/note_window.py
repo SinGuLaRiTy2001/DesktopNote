@@ -11,6 +11,7 @@ from PySide6.QtGui import QColor, QCursor, QFont, QLinearGradient, QPainter, QPa
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -261,6 +262,119 @@ def glass_menu(theme: Theme, parent: QWidget) -> QMenu:
     return menu
 
 
+class _ModeSlot(QWidget):
+    """The pencil and Done in one place: the pencil's background stretches into Done's.
+
+    The slot paints one shared hover background, translucent like any button hover (so the
+    buttons opt out of HoverFx). As the mode switches, that background stretches leftwards from
+    the pencil's width to Done's while its right edge stays put, the pencil fades out, and Done
+    slides in from the right while it fades in; switching back plays the same in reverse.
+
+    The slot is as wide as the wider of the two and both stay right-aligned in it, so neither is
+    ever cut off and the toolbar's other buttons never move. The one fading out stops taking
+    clicks halfway through.
+    """
+
+    RADIUS = 7  # HoverFx's corner radius, as on the toolbar's other buttons.
+    PENCIL_END, DONE_START = 0.4, 0.35  # Share of the morph by which the pencil is gone / Done starts.
+    DONE_SLIDE = 10  # Px Done slides in from the right while it fades in.
+
+    def __init__(self, edit_btn: QToolButton, done_btn: QToolButton, parent: QWidget):
+        super().__init__(parent)
+        self._edit, self._done = edit_btn, done_btn
+        self._fx = []
+        for button in (edit_btn, done_btn):
+            button.setParent(self)
+            button.setProperty("hoverFx", False)  # The slot paints the hover for both.
+            button.installEventFilter(self)
+            fx = motion.ShiftFade(button)
+            button.setGraphicsEffect(fx)
+            self._fx.append(fx)
+        self._level = 0.0
+        self._hover = 0.0
+        self._hover_on = False
+        self._hover_tween: motion.Tween | None = None
+        self.set_level(0.0)
+
+    @staticmethod
+    def _size(button: QToolButton) -> QSize:
+        """Returns the size the button takes: its size hint within its own size limits."""
+        return button.sizeHint().expandedTo(button.minimumSize()).boundedTo(button.maximumSize())
+
+    def set_level(self, level: float) -> None:
+        """Shows the pencil at 0, Done at 1, and the morph from one to the other in between."""
+        self._level = level
+        edit, done = self._size(self._edit), self._size(self._done)
+        self.setFixedSize(max(edit.width(), done.width()), max(edit.height(), done.height()))
+        out = QEasingCurve(QEasingCurve.OutCubic)
+        pencil = 1.0 - out.valueForProgress(min(1.0, level / self.PENCIL_END))
+        done_in = out.valueForProgress(min(1.0, max(0.0, (level - self.DONE_START) / (1.0 - self.DONE_START))))
+        self._fx[0].set(pencil)
+        self._fx[1].set(done_in, dx=self.DONE_SLIDE * (1.0 - done_in))
+        self._edit.setVisible(level < 1.0)
+        self._done.setVisible(level > 0.0)
+        self._edit.setAttribute(Qt.WA_TransparentForMouseEvents, level >= 0.5)
+        self._done.setAttribute(Qt.WA_TransparentForMouseEvents, level < 0.5)
+        self._place()
+        self.update()
+
+    def _place(self) -> None:
+        """Right-aligns both buttons in the slot, vertically centred."""
+        for button in (self._edit, self._done):
+            size = self._size(button)
+            button.setGeometry(self.width() - size.width(), (self.height() - size.height()) // 2,
+                               size.width(), size.height())
+
+    def _background(self) -> QRectF:
+        """Returns the shared background at the current level: the pencil's, stretched to Done's."""
+        edit, done = QRectF(self._edit.geometry()), QRectF(self._done.geometry())
+        t = self._level
+        left = edit.left() + (done.left() - edit.left()) * t
+        top = edit.top() + (done.top() - edit.top()) * t
+        bottom = edit.bottom() + (done.bottom() - edit.bottom()) * t
+        return QRectF(left, top, self.width() - left, bottom - top + 1)
+
+    def eventFilter(self, obj, ev):
+        """Eases the shared hover in while the pointer is over either button."""
+        if ev.type() in (QEvent.Enter, QEvent.Leave):
+            on = self._edit.underMouse() or self._done.underMouse()
+            if ev.type() == QEvent.Enter:
+                on = True
+            if on != self._hover_on:
+                self._hover_on = on
+                self._ease_hover(1.0 if on else 0.0)
+        return False
+
+    def _ease_hover(self, target: float) -> None:
+        if self._hover_tween is not None:
+            self._hover_tween.stop()
+        start = self._hover
+
+        def step(v: float) -> None:
+            self._hover = start + (target - start) * v
+            self.update()
+
+        duration = motion.HoverFx.IN_MS if target > start else motion.HoverFx.OUT_MS
+        self._hover_tween = motion.Tween(self, duration, step)
+        self._hover_tween.start()
+
+    def paintEvent(self, _):
+        """Paints the shared hover background behind the buttons."""
+        if self._hover <= 0.0:
+            return
+        color = QColor(motion.HoverFx.color)
+        color.setAlphaF(color.alphaF() * self._hover)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        p.setBrush(color)
+        p.drawRoundedRect(self._background(), self.RADIUS, self.RADIUS)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._place()
+
+
 class NoteWindow(GlassWindow):
     """A single floating glass note: a title, a scrollable list of item rows and a toolbar.
 
@@ -282,6 +396,9 @@ class NoteWindow(GlassWindow):
         editing: Whether the note is in editing mode.
         rows: The item rows, in note order (excluding rows still collapsing away).
     """
+
+    MODE_STAGGER = 0.2  # Share of the mode switch by which each add button follows the one before.
+    MODE_RISE = 6  # Px the add buttons rise into place as they fade in.
 
     changed = Signal()
     newNoteRequested = Signal(object)
@@ -305,6 +422,9 @@ class NoteWindow(GlassWindow):
         self._glow_tween: motion.Tween | None = None
         self._flash = 0.0  # Tray-list highlight, 0..1.
         self._flash_tween: motion.Tween | None = None
+        self._mode = 0.0  # 0 viewing .. 1 editing, at an even pace; each part eases on its own.
+        self._mode_tween: motion.Tween | None = None
+        self._placeholder_mode = "view"  # The mode whose hint text is shown.
 
         self.setWindowTitle("DesktopNote")
         self.setMouseTracking(True)
@@ -363,6 +483,8 @@ class NoteWindow(GlassWindow):
         self.placeholder.setAlignment(Qt.AlignCenter)
         self.placeholder.setWordWrap(True)
         self.content_lay.addWidget(self.placeholder)
+        self._placeholder_fx = QGraphicsOpacityEffect(self.placeholder)  # Fades as the mode switches.
+        self.placeholder.setGraphicsEffect(self._placeholder_fx)
         self.content_lay.addStretch(1)
         self.scroll.setWidget(self.content)
         root.addWidget(self.scroll, 1)
@@ -398,6 +520,7 @@ class NoteWindow(GlassWindow):
                             (self.btn_more, "note.more")):
             button.setToolTip(tr(key))
         self.btn_done.setText(tr("note.done"))
+        self.mode_slot.set_level(self._mode)  # Done's width depends on the language.
         self.confirm_label.setText(tr("note.confirm_delete"))
         self.btn_cancel.setText(tr("note.cancel"))
         self.btn_confirm_delete.setText(tr("note.delete"))
@@ -409,8 +532,8 @@ class NoteWindow(GlassWindow):
             row.retranslate()
 
     def _update_placeholder(self) -> None:
-        """Sets the empty-note hint for the current mode, embedding the pencil icon in view mode."""
-        if self.editing:
+        """Sets the empty-note hint for the shown mode, embedding the pencil icon in view mode."""
+        if self._placeholder_mode == "edit":
             self.placeholder.setText(html.escape(tr("note.placeholder_edit")))
         else:
             icon_scale = 1 + (self.text_scale - 1) * ItemRow.ICON_FOLLOW  # Grows with the hint's text.
@@ -442,11 +565,15 @@ class NoteWindow(GlassWindow):
         self.btn_done.setCursor(Qt.PointingHandCursor)
         self.btn_done.clicked.connect(lambda: self.set_editing(False))
         self.btn_more = self._tool(self._show_menu)
+        self._add_fx = []
         for w in (self.btn_text, self.btn_todo, self.btn_reminder):
             lay.addWidget(w)
+            fx = motion.ShiftFade(w)  # They rise into place as they fade in.
+            w.setGraphicsEffect(fx)
+            self._add_fx.append(fx)
         lay.addStretch(1)
-        lay.addWidget(self.btn_edit)
-        lay.addWidget(self.btn_done)
+        self.mode_slot = _ModeSlot(self.btn_edit, self.btn_done, bar)
+        lay.addWidget(self.mode_slot)
         lay.addWidget(self.btn_more)
         return bar
 
@@ -655,13 +782,56 @@ class NoteWindow(GlassWindow):
             row.set_editing(editing)
         self.title_edit.setReadOnly(not editing)
         motion.fold(self.title_edit, editing or bool(self.note.title.strip()))
-        for button in (self.btn_text, self.btn_todo, self.btn_reminder, self.btn_done):
-            button.setVisible(editing)
-        self.btn_edit.setVisible(not editing)
         self.placeholder.setVisible(not self.rows)
-        self._update_placeholder()
+        self._ease_mode(1.0 if editing else 0.0)
         if not editing and self.focusWidget():
             self.focusWidget().clearFocus()
+
+    def _ease_mode(self, target: float) -> None:
+        """Eases the toolbar and the empty-note hint to editing (1) or viewing (0) mode.
+
+        The pencil's background stretches into Done's, the add buttons rise and fade in one after
+        another from the left (and leave in reverse), and the hint fades out and back in with the
+        other mode's text. The switch runs at an even pace and each part eases on its own. It is
+        instant while the window is not on screen yet.
+        """
+        if self._mode_tween is not None:
+            self._mode_tween.stop()
+        start = self._mode
+
+        def step(v: float) -> None:
+            self._set_mode(start + (target - start) * v)
+
+        if not self.isVisible():
+            step(1.0)
+            return
+        self._mode_tween = motion.Tween(self, motion.MODE_MS, step, easing=QEasingCurve.Linear)
+        self._mode_tween.start()
+
+    def _set_mode(self, level: float) -> None:
+        """Lays out the mode transition at ``level``, 0 (viewing) to 1 (editing), in even time.
+
+        Each part eases on its own: the pencil's background stretches into Done's (InOutCubic,
+        with the pencil and Done easing out within it, see _ModeSlot), each add button eases out
+        over its own, overlapping share of the switch, and the hint eases out to the middle of
+        the switch and in again after it.
+        """
+        self._mode = level
+        cross, rise = QEasingCurve(QEasingCurve.InOutCubic), QEasingCurve(QEasingCurve.OutCubic)
+        self.mode_slot.set_level(cross.valueForProgress(level))
+        share = 1.0 - 2 * self.MODE_STAGGER  # Each add button's part of the switch.
+        buttons = (self.btn_text, self.btn_todo, self.btn_reminder)
+        for i, (button, fx) in enumerate(zip(buttons, self._add_fx)):
+            # From the left when entering; the reverse when leaving, as the level runs back.
+            local = min(1.0, max(0.0, (level - i * self.MODE_STAGGER) / share))
+            v = rise.valueForProgress(local)
+            fx.set(v, dy=self.MODE_RISE * (1.0 - v))
+            button.setVisible(level > 0.0)
+        half = abs(1.0 - 2.0 * level)  # 1 at either end, 0 halfway, when the text swaps.
+        self._placeholder_fx.setOpacity(QEasingCurve(QEasingCurve.OutCubic).valueForProgress(half))
+        if (level >= 0.5) != (self._placeholder_mode == "edit"):  # Swaps the text where it is hidden.
+            self._placeholder_mode = "edit" if level >= 0.5 else "view"
+            self._update_placeholder()
 
     def refresh_reminders(self, now: datetime | None = None) -> None:
         """Updates the due state of every reminder row relative to now (default: current time)."""
