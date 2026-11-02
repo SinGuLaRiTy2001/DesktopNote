@@ -13,6 +13,7 @@ from PySide6.QtNetwork import QLocalServer
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidgetAction
 
 from . import __version__, i18n, icons, motion, win_effects
+from .about import AboutWindow
 from .i18n import tr
 from .instance import SERVER_NAME, claim
 from .models import Item, Note
@@ -68,6 +69,7 @@ class DesktopNoteApp:
         qapp: The running QApplication.
         store: Notes and settings, loaded from disk.
         windows: Open note windows by note id.
+        about: The last About window opened, or None; see _about_open().
         theme: The current Theme (light or dark).
         save_timer: Single-shot timer behind schedule_save.
         reminder_timer: Periodic timer that runs check_reminders.
@@ -84,6 +86,7 @@ class DesktopNoteApp:
         settings = self.store.settings
         settings.text_scale = nearest_text_scale(settings.text_scale)  # The steps may have changed since it was saved.
         self.windows: dict[str, NoteWindow] = {}
+        self.about: AboutWindow | None = None
         i18n.set_language(self.store.settings.language)
         self._apply_color_scheme()
         self.theme = self._detect_theme()
@@ -280,6 +283,8 @@ class DesktopNoteApp:
         GlassToolTip.theme = self.theme
         for win in self.windows.values():
             win.apply_theme(self.theme)
+        if self._about_open():
+            self.about.apply_theme(self.theme)
         self._refresh_tray_menu()
 
     def set_theme_mode(self, mode: str) -> None:
@@ -411,6 +416,8 @@ class DesktopNoteApp:
         theme update live.
         """
         menu, settings = self.tray_menu, self.store.settings
+        if self._about_open():  # The menu can switch the language, which About does not follow.
+            self.about.dismiss()
         for sub in menu.findChildren(QMenu, options=Qt.FindDirectChildrenOnly):
             sub.deleteLater()
         menu.clear()
@@ -467,6 +474,7 @@ class DesktopNoteApp:
         menu.addMenu(sub)
 
         menu.addSeparator()
+        add(menu, "info", lambda: tr("tray.about"), self.show_about)
         add(menu, "quit", lambda: tr("tray.quit"), self.quit)
         self._refresh_tray_menu()
 
@@ -532,6 +540,19 @@ class DesktopNoteApp:
             if menu.isVisible():
                 menu.adjustSize()  # A new language can change the width.
                 menu.update()  # Switches are painted by the menu itself.
+
+    def show_about(self) -> None:
+        """Opens the About window, or brings the open one to the front."""
+        if self._about_open():
+            self.about.raise_()
+            self.about.activateWindow()
+        else:
+            self.about = AboutWindow(self.theme)
+            self.about.popup()
+
+    def _about_open(self) -> bool:
+        """Returns whether the About window is open and not already fading out."""
+        return self.about is not None and not self.about.closing
 
     def _toggle_autostart(self) -> None:
         enabled = not win_effects.is_autostart_enabled()

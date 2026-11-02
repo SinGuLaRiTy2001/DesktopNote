@@ -26,6 +26,7 @@ from . import icons, motion, win_effects
 from .i18n import tr
 from .models import Item, Note, now_iso
 from .docking import EdgeDock
+from .glass import GlassWindow
 from .snapping import SnapMove
 from .theme import BODY_PT, Theme, glow_color, menu_qss, note_qss, tag_color
 from .widgets import (
@@ -42,14 +43,10 @@ from .widgets import (
 
 EDGE = 7  # Width in px of the resize-sensitive border.
 CORNER = 16  # Larger grab zone at the corners.
-RADIUS = 8  # Matches Windows 11's corner rounding, so the painted border and DWM's clip coincide.
 MIN_SIZE = QSize(200, 150)  # Wider where the delete confirmation needs it.
 GLOW_HEIGHT = 44  # The tag colour fades out before the first row, so text contrast holds.
 GLOW_MS = 260  # Cross-fade when the tag changes.
 FLASH_MS = 900  # Pulse when a note is picked from the tray list.
-# A non-layered window with DWM acrylic moves and resizes in lockstep with the cursor. Without it,
-# Qt makes the frameless translucent window layered, which flickers on resize.
-NATIVE_BACKDROP = win_effects.HAS_SYSTEM_BACKDROP
 
 
 class GlassMenu(QMenu):
@@ -263,7 +260,7 @@ def glass_menu(theme: Theme, parent: QWidget) -> QMenu:
     return menu
 
 
-class NoteWindow(QWidget):
+class NoteWindow(GlassWindow):
     """A single floating glass note: a title, a scrollable list of item rows and a toolbar.
 
     The window is frameless and paints its own rounded glass over the system acrylic (or a blur
@@ -290,15 +287,12 @@ class NoteWindow(QWidget):
     deleteRequested = Signal(object)
 
     def __init__(self, note: Note, theme: Theme, soon_minutes: int, text_scale: float = 1.0):
-        super().__init__(None)
+        super().__init__(theme)
         self.text_scale = text_scale
         self.note = note
-        self.theme = theme
         self.soon_minutes = soon_minutes
         self.editing = False
         self.rows: list[ItemRow] = []
-        self._glass = False  # Acrylic (or blur) is active.
-        self._moving = False
         self._snap_move = SnapMove(self)  # Snap to align while dragged.
         self.dock = EdgeDock(self)
         self._moved = False  # Whether the current move or resize moved the window.
@@ -306,14 +300,12 @@ class NoteWindow(QWidget):
         self._cursor_watch = QTimer(self)  # Runs while a resize cursor is shown.
         self._cursor_watch.setInterval(40)
         self._cursor_watch.timeout.connect(self._check_resize_cursor)
-        self._intro: motion.BackdropFade | None = None  # Stand-in acrylic while fading in.
         self._glow = self._glow_target()  # Tag colour washed over the top of the glass.
         self._glow_tween: motion.Tween | None = None
         self._flash = 0.0  # Tray-list highlight, 0..1.
         self._flash_tween: motion.Tween | None = None
 
         self.setWindowTitle("DesktopNote")
-        self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMouseTracking(True)
         self.setMinimumSize(MIN_SIZE)
         self._apply_flags()
@@ -507,32 +499,10 @@ class NoteWindow(QWidget):
 
     def _apply_flags(self) -> None:
         """Sets the window flags for the backdrop in use and the note's pinned state."""
-        if NATIVE_BACKDROP:
-            # Keeps a native frame, so the window is not layered; WM_NCCALCSIZE strips it again.
-            flags = Qt.Tool | Qt.CustomizeWindowHint
-        else:
-            flags = Qt.FramelessWindowHint | Qt.Tool | Qt.NoDropShadowWindowHint
+        flags = self.glass_flags()
         if self.note.pinned:
             flags |= Qt.WindowStaysOnTopHint
         self.setWindowFlags(flags)
-
-    def _apply_glass(self) -> None:
-        """Applies the system acrylic (or an acrylic/blur fallback) and rounded corners."""
-        if not self.isVisible():
-            return
-        hwnd = int(self.winId())
-        rgba = self.theme.acrylic_rgba()
-        if NATIVE_BACKDROP:
-            self._glass = win_effects.set_system_acrylic(hwnd, self.theme.dark)
-            # Notes that were never focused would otherwise get the flat "inactive" backdrop.
-            win_effects.def_window_proc(hwnd, win_effects.WM_NCACTIVATE, 1, -1)
-        elif self._moving:
-            # Acrylic lags behind the cursor while dragging; plain blur does not.
-            self._glass = win_effects.set_blur(hwnd, rgba)
-        else:
-            self._glass = win_effects.set_acrylic(hwnd, rgba)
-        win_effects.set_rounded_corners(hwnd)
-        self.update()
 
     # --- Items ---------------------------------------------------------------
     def _add_row(self, item: Item, index: int | None = None) -> ItemRow:
@@ -813,53 +783,15 @@ class NoteWindow(QWidget):
             self.bottom.setCurrentIndex(1)
 
     # --- Window events -------------------------------------------------------
-    def show_animated(self) -> None:
-        """Fades in over a blurred snapshot of what is behind, then hands over to live acrylic."""
-        if NATIVE_BACKDROP:
-            self._intro = motion.BackdropFade(self, QColor(self.theme.system_tint))
-        self.setWindowOpacity(0.0)
-        self.show()
-        motion.Tween(self, motion.NOTE_IN_MS, self.setWindowOpacity, self._hand_over).start_after_first_paint(self)
-
     def _hand_over(self) -> None:
-        if self._intro is not None:
-            # Opacity is back at 1, so the window is no longer layered and DWM draws the acrylic.
-            self._apply_glass()
-            self._intro.hand_over()
+        super()._hand_over()
         self.dock.settle()
-
-    def reapply_glass(self) -> None:
-        """Restores the acrylic, which Windows drops while the window is translucent."""
-        self._apply_glass()
-
-    def showEvent(self, e):
-        super().showEvent(e)
-        self._apply_glass()
 
     def paintEvent(self, _):
         """Paints the glass fill, tag glow, flash highlight and border within the outline."""
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        if self._glass:
-            # An alpha-1 base keeps the rounded-off corners hit-testable for resizing, since fully
-            # transparent layered-window pixels are click-through.
-            p.fillRect(self.rect(), QColor(0, 0, 0, 1))
-        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        path = QPainterPath()
-        path.addRoundedRect(rect, RADIUS, RADIUS)
-        if self._intro is not None:
-            self._intro.paint(p, path)
-        fill = self.theme.glass_color()
-        if not self._glass:
-            fill.setAlpha(242)
-        elif NATIVE_BACKDROP:
-            fill.setAlpha(self.theme.fill_alpha)  # Note tint over the system acrylic.
-        elif self._moving:
-            fill.setAlpha(self.theme.glass_alpha)  # Stand-in for the acrylic tint while dragging.
-        else:
-            # Must be non-zero: fully transparent pixels of a layered window are click-through.
-            fill.setAlpha(14)
-        p.fillPath(path, fill)
+        path = self.paint_glass(p)
         if self._glow.alpha():
             grad = QLinearGradient(0, 0, 0, GLOW_HEIGHT)
             for i in range(9):  # Quadratic falloff leaves no visible line where the wash ends.
@@ -1004,12 +936,11 @@ class NoteWindow(QWidget):
             target.dock.hold_for_snap(True)
 
     def nativeEvent(self, event_type, message):
-        """Handles the Windows messages behind the frameless acrylic window.
+        """Snaps the note while it is dragged and docks it when the drag ends.
 
-        With the native backdrop, the non-client area is removed and the window always reports
-        itself active so DWM keeps the acrylic. Otherwise the glass switches to plain blur while
-        the window is being moved or resized.
+        The messages behind the glass are left to GlassWindow.
         """
+        exit_move = False
         if event_type == b"windows_generic_MSG" or event_type == "windows_generic_MSG":
             msg = wintypes.MSG.from_address(int(message))
             if msg.message == win_effects.WM_ENTERSIZEMOVE:
@@ -1021,25 +952,11 @@ class NoteWindow(QWidget):
                 self._snap(wintypes.RECT.from_address(msg.lParam))
                 return True, 1
             if msg.message == win_effects.WM_EXITSIZEMOVE:
+                exit_move = True
                 self._snap_move.stop()
                 self._show_snap_target(None)
                 self.dock.drag_finished(self._moved)
-            if NATIVE_BACKDROP:
-                if msg.message == win_effects.WM_NCCALCSIZE and msg.wParam:
-                    return True, 0  # Client area = whole window: no title bar or borders.
-                if msg.message == win_effects.WM_NCACTIVATE:
-                    # Always reports "active", because DWM turns the acrylic flat for inactive
-                    # windows. lParam -1 skips the frame repaint that would draw a white border
-                    # over the note.
-                    win_effects.def_window_proc(msg.hWnd, msg.message, 1, -1)
-                    return True, 1
-                if msg.message == win_effects.WM_EXITSIZEMOVE:
-                    self._sync_geometry()
-            elif msg.message == win_effects.WM_ENTERSIZEMOVE:
-                self._moving = True
-                self._apply_glass()
-            elif msg.message == win_effects.WM_EXITSIZEMOVE:
-                self._moving = False
-                self._apply_glass()
-                self._sync_geometry()
-        return super().nativeEvent(event_type, message)
+        result = super().nativeEvent(event_type, message)
+        if exit_move:
+            self._sync_geometry()
+        return result

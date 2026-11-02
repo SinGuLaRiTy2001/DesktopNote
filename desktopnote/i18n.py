@@ -18,7 +18,12 @@ _STRINGS: dict[str, tuple[str, str]] = {
     "tray.show_all": ("显示全部记事板", "Show All Notes"),
     "tray.untitled": ("空白记事板", "Empty Note"),
     "tray.settings": ("设置", "Settings"),
+    "tray.about": ("关于 DesktopNote", "About DesktopNote"),
     "tray.quit": ("退出", "Quit"),
+    # About window.
+    "about.version": ("版本 {version}", "Version {version}"),
+    "about.developer": ("由文简使用 Claude Code 开发", "Developed by Jian Wen with Claude Code"),
+    "about.close": ("关闭", "Close"),
     "settings.theme_auto": ("跟随系统", "Match System"),
     "settings.theme_auto_short": ("自动", "Auto"),
     "settings.theme_light": ("浅色", "Light"),

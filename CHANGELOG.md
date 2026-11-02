@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- An About window in the tray menu, with the version and developer.
+
 ### Changed
 
 - Scrolling a note glides smoothly: the wheel, a click on the scroll track and a new row coming into view.

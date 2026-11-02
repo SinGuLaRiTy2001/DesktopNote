@@ -96,6 +96,7 @@ In edit mode, add items with the buttons at the bottom of the note.
   choose one to jump to it.
 - **Settings** stay open while you change them. **Open Data Folder** shows where your notes are
   stored.
+- **About DesktopNote** shows the version and a link to this repository.
 
 ## Data
 

@@ -92,6 +92,11 @@ _PATHS: dict[str, str] = {
     "chevron_right": f'<path {_stroke(2)} d="M9.5 6l6 6-6 6"/>',
     "chevron_up": f'<path {_stroke(2.2)} d="M6.5 14.5L12 9l5.5 5.5"/>',
     "chevron_down": f'<path {_stroke(2.2)} d="M6.5 9.5L12 15l5.5-5.5"/>',
+    "info": (
+        f'<circle {_STROKE} cx="12" cy="12" r="8.5"/><path {_STROKE} d="M12 11v5.5"/>'
+        '<circle cx="12" cy="7.8" r="1.15" fill="{c}"/>'
+    ),
+    "xmark": f'<path {_STROKE} d="M7 7l10 10M17 7L7 17"/>',
     "quit": (
         f'<path {_STROKE} d="M13.5 4.5h-7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h7M10.5 12h9M16.5 8.5L20 12l-3.5 3.5"/>'
     ),
