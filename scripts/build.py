@@ -5,7 +5,9 @@
 
 PyInstaller packs the app in one-folder mode: it starts faster than a one-file executable and
 keeps the LGPL-licensed Qt libraries replaceable. Qt modules and plugins the app does not use are
-left out, and DesktopNote.exe gets the app icon and version information.
+left out, and DesktopNote.exe gets the app icon and version information. The command line for
+scripts and agents, desktopnote-cli.exe, is a small console executable next to it that shares its
+libraries.
 """
 from __future__ import annotations
 
@@ -24,8 +26,10 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build"
 DIST = ROOT / "dist"
 APP = DIST / "DesktopNote"
+CLI_NAME = "desktopnote-cli"
 
 USED_QT = {"QtCore", "QtGui", "QtWidgets", "QtNetwork", "QtSvg"}
+CLI_QT = {"QtCore", "QtNetwork"}  # The command line opens no windows.
 # Standard-library modules the app never loads; ssl and hashlib would also bring in OpenSSL.
 UNUSED_STDLIB = ["tkinter", "unittest", "pydoc", "doctest", "lib2to3", "sqlite3", "xmlrpc", "pdb", "ssl", "_ssl",
                  "hashlib", "_hashlib", "decimal", "_decimal", "unicodedata", "email", "http", "urllib", "xml",
@@ -99,19 +103,49 @@ def write_version_file(path: Path, ver: str) -> None:
 """, encoding="utf-8")
 
 
-def run_pyinstaller(icon: Path, version_file: Path) -> None:
-    """Runs PyInstaller in one-folder, windowed mode with the unused modules excluded."""
+def run_pyinstaller(icon: Path, version_file: Path, script: Path, name: str, windowed: bool,
+                    used_qt: set[str], dist: Path) -> None:
+    """Runs PyInstaller in one-folder mode with the unused modules excluded.
+
+    Args:
+        icon: The executable's icon.
+        version_file: The version resource.
+        script: The entry script.
+        name: The executable's name, without ".exe".
+        windowed: Whether it is a windowed program (no console).
+        used_qt: The Qt modules it uses; the others are left out.
+        dist: Where the folder goes.
+    """
     import PySide6
 
-    unused_qt = sorted(p.stem for p in Path(PySide6.__file__).parent.glob("Qt*.pyd") if p.stem not in USED_QT)
-    excludes = [f"PySide6.{name}" for name in unused_qt] + UNUSED_STDLIB
-    command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed", "--onedir",
-               "--name", "DesktopNote", "--icon", str(icon), "--version-file", str(version_file),
-               "--distpath", str(DIST), "--workpath", str(BUILD / "pyinstaller"), "--specpath", str(BUILD),
+    unused_qt = sorted(p.stem for p in Path(PySide6.__file__).parent.glob("Qt*.pyd") if p.stem not in used_qt)
+    excludes = [f"PySide6.{module}" for module in unused_qt] + UNUSED_STDLIB
+    command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir",
+               "--windowed" if windowed else "--console",
+               "--name", name, "--icon", str(icon), "--version-file", str(version_file),
+               "--distpath", str(dist), "--workpath", str(BUILD / "pyinstaller" / name), "--specpath", str(BUILD),
                "--log-level", "WARN"]
     for module in excludes:
         command += ["--exclude-module", module]
-    subprocess.run(command + [str(ROOT / "DesktopNote.pyw")], check=True, cwd=ROOT)
+    subprocess.run(command + [str(script)], check=True, cwd=ROOT)
+
+
+def add_cli(icon: Path, version_file: Path) -> None:
+    """Builds desktopnote-cli.exe and puts it next to DesktopNote.exe, sharing its libraries.
+
+    Only the executable, and any file the app does not already ship, is copied into the app
+    folder; both were built from the same Python and PyInstaller, so the shared files match.
+    """
+    dist = BUILD / "cli-dist"
+    shutil.rmtree(dist, ignore_errors=True)
+    run_pyinstaller(icon, version_file, ROOT / "DesktopNoteCLI.py", CLI_NAME, False, CLI_QT, dist)
+    shutil.copy2(dist / CLI_NAME / f"{CLI_NAME}.exe", APP)
+    source = dist / CLI_NAME / "_internal"
+    for path in sorted(source.rglob("*")):
+        target = APP / "_internal" / path.relative_to(source)
+        if path.is_file() and not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
 
 
 def prune() -> None:
@@ -174,8 +208,9 @@ def main() -> int:
     icon, version_file = BUILD / "DesktopNote.ico", BUILD / "version_info.txt"
     write_icon(icon)
     write_version_file(version_file, ver)
-    run_pyinstaller(icon, version_file)
-    prune()
+    run_pyinstaller(icon, version_file, ROOT / "DesktopNote.pyw", "DesktopNote", True, USED_QT, DIST)
+    add_cli(icon, version_file)
+    prune()  # After add_cli, so nothing it copies brings a pruned file back.
     add_release_files()
     archive = package(ver)
     print(f"DesktopNote {ver}: folder {folder_mb(APP):.1f} MB, zip {archive.stat().st_size / 2**20:.1f} MB")

@@ -19,6 +19,8 @@ library modules (see the lists at the top of `scripts/build.py`).
 - The built `DesktopNote.exe` starts, shows its notes and hides at an edge; a second launch shows
   the running app's notes. `tools/startup_perf.py` stays near its last numbers.
 - Explorer shows the exe's version and icon (Properties > Details).
+- `desktopnote-cli.exe list` prints the notes as JSON, and `desktopnote-cli.exe add todo test`
+  shows the item at once in the running app.
 
 ## Publish
 
