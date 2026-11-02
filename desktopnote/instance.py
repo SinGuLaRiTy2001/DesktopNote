@@ -1,4 +1,4 @@
-"""Single instance: only one DesktopNote runs per user; a second launch shows its notes and exits.
+"""Single instance: one DesktopNote runs per user (and data folder); a second launch shows its notes.
 
 Imports only QtCore and QtNetwork, so a second launch can hand over before loading the app.
 """
@@ -6,12 +6,28 @@ from __future__ import annotations
 
 import ctypes
 import getpass
+import os
 import sys
 import time
+import zlib
 
 from PySide6.QtNetwork import QLocalSocket
 
-SERVER_NAME = f"DesktopNote-{getpass.getuser()}"  # Per user: each Windows user gets their own instance.
+
+def _server_name() -> str:
+    """Returns the instance name: one per user, and one per data folder when it is not the default.
+
+    A data folder set with DESKTOPNOTE_HOME (see storage.data_dir) gets an instance of its own, so
+    tests and a second setup never talk to the user's everyday DesktopNote.
+    """
+    name = f"DesktopNote-{getpass.getuser()}"
+    home = os.environ.get("DESKTOPNOTE_HOME")
+    if home:
+        name += f"-{zlib.crc32(os.path.normcase(os.path.abspath(home)).encode('utf-8')):08x}"
+    return name
+
+
+SERVER_NAME = _server_name()
 HANDOVER_WAIT_S = 5.0  # How long a second launch waits for an instance that is still starting.
 ERROR_ALREADY_EXISTS = 183
 
