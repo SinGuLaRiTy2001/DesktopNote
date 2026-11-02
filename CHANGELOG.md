@@ -8,6 +8,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - Scrolling a note glides smoothly: the wheel, a click on the scroll track and a new row coming into view.
+- A note made from another note's menu starts fresh, with the default size and no colour tag;
+  it still opens next to that note.
 
 ## [1.0.0rc1] - 2026-10-31
 

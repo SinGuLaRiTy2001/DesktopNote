@@ -75,6 +75,8 @@ class DesktopNoteApp:
         tray_menu: The tray icon's context menu, rebuilt each time it opens.
     """
 
+    NEW_NOTE_W, NEW_NOTE_H = 300, 340
+
     def __init__(self, qapp: QApplication):
         self.qapp = qapp
         self.store = Store()
@@ -193,23 +195,24 @@ class DesktopNoteApp:
         """Creates a note with an empty text row, opens it and focuses it.
 
         Args:
-            near: A window to cascade from; the new note copies its size and tag. A note docked
-                at a screen edge opens it beside itself instead, where it is not covered. Without
-                it, the note is centred on the screen under the cursor, offset so that successive
-                notes do not stack exactly.
+            near: A window to cascade from. A note docked at a screen edge opens it beside itself
+                instead, where it is not covered. Without it, the note is centred on the screen
+                under the cursor, offset so that successive notes do not stack exactly.
+
+        Every new note starts the same: default size, no tag, no title.
 
         Returns:
             The new note's window.
         """
+        note = Note(w=self.NEW_NOTE_W, h=self.NEW_NOTE_H)
         if near is not None:
             src = near.note  # Where it shows, even while hidden at an edge.
-            note = Note(x=src.x + 32, y=src.y + 32, w=src.w, h=src.h, tint=src.tint)
-            beside = near.dock.place_beside(src.w, src.h)
+            note.x, note.y = src.x + 32, src.y + 32
+            beside = near.dock.place_beside(note.w, note.h)
             if beside is not None:
                 note.x, note.y = beside.x(), beside.y()
         else:
             area = (QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()).availableGeometry()
-            note = Note(w=300, h=340)
             note.x = area.center().x() - note.w // 2 + 24 * (len(self.windows) % 6)
             note.y = area.center().y() - note.h // 2 + 24 * (len(self.windows) % 6)
         self.store.notes.append(note)
