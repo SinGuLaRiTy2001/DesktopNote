@@ -325,11 +325,113 @@ class TitleEdit(QLineEdit):
 
 
 # --- Item rows ---------------------------------------------------------------
+class DeletePill(QToolButton):
+    """An item's second delete step: the ×'s hover circle stretched into a "Delete" pill.
+
+    At progress 0 it looks exactly like the hovered × (HoverFx's circle in theme.hover, with the
+    "xmark_circle" icon inside). Towards 1 the circle stretches leftwards into a pill of the same
+    height whose right end stays put, the × fades away, and the text slides in from the right
+    while it fades in. Shrinking back plays the same in reverse. The pill is the translucent
+    hover grey, so it stays part of the glass; under the pointer it deepens part of the way to
+    theme.pressed (HOVER_DEEPEN, PRESSED_DEEPEN: the text keeps 4.5:1 over tag glows). A
+    double click counts as one click, so the second click of a double click on the × cannot reach
+    it.
+
+    Attributes:
+        theme: The theme used for drawing.
+        progress: How far the hover circle has stretched into the pill, 0..1.
+        icon_size: Size of the × icon drawn inside, matching the delete button's.
+    """
+
+    PAD_X = 10
+    CROSS_END, TEXT_START = 0.35, 0.4  # Progress by which the × is gone, and the text starts.
+    TEXT_SLIDE = 10  # Px the text slides in from the right while it fades in.
+    HOVER_DEEPEN, PRESSED_DEEPEN = 0.5, 0.75  # How far from theme.hover towards theme.pressed.
+
+    def __init__(self, theme: Theme, parent=None):
+        super().__init__(parent)
+        self.theme = theme
+        self.progress = 0.0
+        self.icon_size = 15
+        self.setProperty("hoverFx", False)  # It paints its own hover.
+        self._hover = 0.0
+        self._tween: motion.Tween | None = None
+
+    def sizeHint(self) -> QSize:
+        fm = QFontMetricsF(self.font())
+        return QSize(math.ceil(fm.horizontalAdvance(self.text())) + 2 * self.PAD_X, math.ceil(fm.height()) + 4)
+
+    def set_progress(self, progress: float) -> None:
+        """Sets how far the hover circle has stretched into the pill, and repaints."""
+        self.progress = progress
+        self.update()
+
+    @classmethod
+    def fill(cls, theme: Theme, hover: float, down: bool) -> QColor:
+        """Returns the pill's colour: the hover grey, deepening towards the pressed grey."""
+        idle, hot = css_color(theme.hover), css_color(theme.pressed)
+        level = cls.PRESSED_DEEPEN if down else cls.HOVER_DEEPEN * hover
+        color = QColor(hot)
+        color.setAlphaF(idle.alphaF() + (hot.alphaF() - idle.alphaF()) * level)
+        return color
+
+    def mouseDoubleClickEvent(self, e):
+        e.accept()  # The second click of a double click: ignored, so it cannot confirm.
+
+    def _hover_to(self, target: float, duration: int) -> None:
+        """Eases the hover level to ``target`` over ``duration`` milliseconds."""
+        if self._tween is not None:
+            self._tween.stop()
+        start = self._hover
+
+        def step(v: float) -> None:
+            self._hover = start + (target - start) * v
+            self.update()
+
+        self._tween = motion.Tween(self, duration, step)
+        self._tween.start()
+
+    def enterEvent(self, e):
+        self._hover_to(1.0, motion.HoverFx.IN_MS)
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self._hover_to(0.0, motion.HoverFx.OUT_MS)
+        super().leaveEvent(e)
+
+    def paintEvent(self, _):
+        """Paints the stretching circle, the fading × and the sliding text."""
+        h, w = float(self.height()), float(self.width())
+        t = self.progress
+        left = (w - h) * (1.0 - t)  # Starts as the circle at the right end, the ×'s place.
+        shape = QPainterPath()
+        shape.addRoundedRect(QRectF(left, 0, w - left, h), h / 2, h / 2)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillPath(shape, self.fill(self.theme, self._hover, self.isDown()))
+        cross = max(0.0, 1.0 - t / self.CROSS_END)
+        if cross > 0.0:  # The × itself, where the delete button draws it.
+            pm = icons.pixmap("xmark_circle", self.theme.tertiary, self.icon_size)
+            p.setOpacity(cross)
+            p.drawPixmap(QPointF(w - h / 2 - self.icon_size / 2, (h - self.icon_size) / 2), pm)
+        text = min(1.0, max(0.0, (t - self.TEXT_START) / (1.0 - self.TEXT_START)))
+        if text > 0.0:  # Slides in from the right, clipped by the pill; never squeezed.
+            p.setClipPath(shape)
+            p.setOpacity(text)
+            p.setPen(QColor(self.theme.text))
+            p.setFont(self.font())
+            # Qt centres the font's box; this centres the glyphs themselves (see glyph_midline_offset).
+            dx = self.TEXT_SLIDE * (1.0 - text)
+            p.drawText(QRectF(dx, -glyph_midline_offset(self.font()), w, h), Qt.AlignCenter, self.text())
+
+
 class ItemRow(QWidget):
     """One content item (text, todo or reminder) inside a note.
 
     Hovering eases in a soft rounded highlight; in edit mode the delete button fades in and out
-    with it.
+    with it. Deleting takes two clicks: the ×'s hover circle stretches into a Delete pill
+    (del_confirm) over the row's end, and that deletes; leaving the row, waiting CONFIRM_MS,
+    lifting the row or leaving edit mode shrinks it back into the ×.
 
     A press on the text or background held still for HOLD_MS lifts the row, in either mode, and
     emits the drag signals; the note then moves it (see reorder.RowReorder). From HINT_MS on, a
@@ -346,10 +448,11 @@ class ItemRow(QWidget):
         editor: The item's text editor.
         due_btn: The due-time button for reminders, or None for other types.
         del_btn: The delete button, shown only while editing and hovered.
+        del_confirm: The Delete pill the delete button stretches into; it deletes the item.
 
     Signals:
         changed: Emitted when the item's text, done state or due time changes.
-        deleteRequested: Emitted with the row when its delete button is clicked.
+        deleteRequested: Emitted with the row when its Delete pill is clicked.
         newItemAfter: Emitted with the row when Enter asks for a new item after it.
         focusPrevious: Emitted with the row when Backspace is pressed in its empty editor.
         editRequested: Emitted when a double click asks to enter edit mode.
@@ -370,6 +473,9 @@ class ItemRow(QWidget):
     RISE_MS, SETTLE_MS = 220, 260  # Lifting for a drag, and settling back after the drop.
     SHADOW_BLUR, SHADOW_DY = 18, 4  # At full lift; both grow from 0 as the row rises.
     SHADOW_ALPHA = {False: 0.18, True: 0.45}  # By theme.dark: light glass needs a fainter one.
+    CONFIRM_MS = 3000  # The Delete pill shrinks back into the × after this long unclicked.
+    CONFIRM_IN_MS, CONFIRM_OUT_MS = 240, 200  # The × stretching into the pill, and back.
+    DEL_ICON = 15  # The ×'s icon size.
     RADIUS = 7
     HOVER_STRENGTH = 0.6  # Fraction of theme.hover: softer than a button, whose hover stacks on top.
 
@@ -408,6 +514,14 @@ class ItemRow(QWidget):
         self._hint.timeout.connect(self._show_hold)
         self._shadow: QGraphicsDropShadowEffect | None = None  # Only while lifted for a drag.
         self._backdrop: QPixmap | None = None  # Frosted view of what lies beneath, while lifted.
+        self._armed = 0.0  # How far the × has stretched into the Delete pill, eased.
+        self._armed_tween: motion.Tween | None = None
+        self._armed_on = False  # Where _armed is heading.
+        self._disarm = QTimer(self, singleShot=True, interval=self.CONFIRM_MS)
+        self._disarm.timeout.connect(lambda: self._set_armed(False))
+        # Leaving while the pill shows: the highlight and the × fade once the pill has shrunk back.
+        self._leave_later = QTimer(self, singleShot=True, interval=self.CONFIRM_OUT_MS)
+        self._leave_later.timeout.connect(lambda: self._ease("_hover", 0.0, motion.HoverFx.OUT_MS))
 
         row = QHBoxLayout(self)
         row.setContentsMargins(self.PAD_X, self.PAD_Y, self.PAD_X, self.PAD_Y)
@@ -453,12 +567,12 @@ class ItemRow(QWidget):
 
         self.del_btn = QToolButton(self)
         self.del_btn.setFixedSize(22, 22)
-        self.del_btn.setIconSize(QSize(15, 15))
+        self.del_btn.setIconSize(QSize(self.DEL_ICON, self.DEL_ICON))
         self.del_btn.setCursor(Qt.PointingHandCursor)
         self.del_btn.setProperty("hoverRadius", 11)
         self.del_btn.setStyleSheet(
             "QToolButton{padding:0;border-radius:11px;} QToolButton:hover{background:transparent;}")
-        self.del_btn.clicked.connect(lambda: self.deleteRequested.emit(self))
+        self.del_btn.clicked.connect(lambda: self._set_armed(True))
         row.addWidget(self.del_btn, 0, Qt.AlignTop)
         self._del_fx = QGraphicsOpacityEffect(self.del_btn)  # Fades with the row highlight.
         self._del_fx.setOpacity(0.0)
@@ -468,6 +582,14 @@ class ItemRow(QWidget):
         policy = self.del_btn.sizePolicy()
         policy.setRetainSizeWhenHidden(True)
         self.del_btn.setSizePolicy(policy)
+        # The second step floats over the row's end, so the text never re-wraps for it.
+        self.del_confirm = DeletePill(theme, self)
+        self.del_confirm.icon_size = self.DEL_ICON
+        self.del_confirm.setCursor(Qt.PointingHandCursor)
+        self.del_confirm.clicked.connect(self._confirm_delete)
+        self._confirm_fx = QGraphicsOpacityEffect(self.del_confirm)
+        self.del_confirm.setGraphicsEffect(self._confirm_fx)
+        self.del_confirm.hide()
 
         self.apply_theme(theme)
         self.set_editing(False)
@@ -479,18 +601,23 @@ class ItemRow(QWidget):
         """Updates the placeholder, tooltips and due label for the current language."""
         self.editor.setPlaceholderText(tr("item." + self.item.type))
         self.del_btn.setToolTip(tr("item.delete"))
+        self.del_confirm.setText(tr("note.delete"))
+        self._place_confirm()
         self.refresh()
 
     def apply_theme(self, theme: Theme) -> None:
         """Switches the row to ``theme`` and redraws its icons."""
         self.theme = theme
-        self.del_btn.setIcon(icons.icon("xmark_circle", theme.tertiary, 15))
+        self.del_btn.setIcon(icons.icon("xmark_circle", theme.tertiary, self.DEL_ICON))
+        self.del_confirm.theme = theme
         self.refresh()
 
     def set_editing(self, editing: bool) -> None:
         """Enters or leaves edit mode, easing the delete button's visibility."""
         self.editing = editing
         self.editor.setReadOnly(not editing)
+        if not editing:
+            self._set_armed(False)
         # Eased so that a row already under the cursor fades its delete button in or out.
         if self._edit_tween is not None:
             self._edit_tween.stop()
@@ -540,14 +667,56 @@ class ItemRow(QWidget):
         self._shadow.setBlurRadius(self.SHADOW_BLUR * level)
         self._shadow.setOffset(0, self.SHADOW_DY * level)
 
+    def _set_armed(self, armed: bool) -> None:
+        """Stretches the ×'s hover circle into the Delete pill, or shrinks the pill back."""
+        if armed == self._armed_on:
+            return
+        self._armed_on = armed
+        if armed:
+            self._disarm.start()
+        else:
+            self._disarm.stop()
+        self._ease("_armed", 1.0 if armed else 0.0, self.CONFIRM_IN_MS if armed else self.CONFIRM_OUT_MS,
+                   QEasingCurve.InOutCubic)
+
+    def _confirm_delete(self) -> None:
+        """Asks for the item to be deleted; the pill fades away with the row."""
+        # A child with an effect of its own would be left out of the row's fade (motion.fade_out).
+        self.del_confirm.setGraphicsEffect(None)
+        self.deleteRequested.emit(self)
+
+    def _place_confirm(self) -> None:
+        """Places the Delete pill over the row's end, its right end on the ×, and sets its morph.
+
+        It has the delete button's height, so it starts as that button's hover circle.
+        """
+        if self._armed <= 0.0:
+            self.del_confirm.hide()
+            return
+        x = self.del_btn.geometry()
+        w = max(self.del_confirm.sizeHint().width(), x.width())
+        self.del_confirm.setGeometry(x.right() + 1 - w, x.y(), w, x.height())
+        self.del_confirm.set_progress(self._armed)
+        if self.del_confirm.graphicsEffect() is not None:
+            self._confirm_fx.setOpacity(self._visible_level())
+        self.del_confirm.show()
+        self.del_confirm.raise_()
+
     def _sync_delete(self) -> None:
         """Shows the delete button only while editing, at the highlight's opacity.
 
-        It fades out as the row lifts for a drag.
+        It fades out as the row lifts for a drag. While the Delete pill shows, the pill stands in
+        for it (it starts as an exact copy of the hovered ×).
         """
-        level = self._hover * self._edit_level * (1.0 - self._lift)
+        level = self._visible_level() if self._armed <= 0.0 else 0.0
         self._del_fx.setOpacity(level)
         self.del_btn.setVisible(level > 0.0)
+        if self._armed > 0.0 and self.del_confirm.graphicsEffect() is not None:
+            self._confirm_fx.setOpacity(self._visible_level())
+
+    def _visible_level(self) -> float:
+        """Returns how visible the × (or the pill standing in for it) is: hover, edit, not lifted."""
+        return self._hover * self._edit_level * (1.0 - self._lift)
 
     LEAD_W, LEAD_H, ICON = 24, 21, 19  # At scale 1.0; see the lead button.
     DUE_ICON = 12
@@ -566,6 +735,10 @@ class ItemRow(QWidget):
         base.setPointSizeF(BODY_PT)
         font.setPointSizeF(BODY_PT * scale)
         self.editor.setFont(font)
+        confirm = QFont(self.del_confirm.font())
+        confirm.setPointSizeF(DUE_PT * scale)
+        self.del_confirm.setFont(confirm)
+        self._place_confirm()
         k = 1 + (scale - 1) * self.ICON_FOLLOW
         self._icon_px = round(self.ICON * k)
         self._due_icon_px = round(self.DUE_ICON * k)
@@ -708,7 +881,7 @@ class ItemRow(QWidget):
         self.changed.emit()
 
     def _ease(self, attr: str, target: float, duration: int, easing=motion.EASE_OUT) -> None:
-        """Eases the level ``attr`` ("_hover" or "_lift") to ``target``."""
+        """Eases the level ``attr`` ("_hover", "_lift" or "_armed") to ``target``."""
         tween = getattr(self, attr + "_tween")
         if tween is not None:
             tween.stop()
@@ -718,6 +891,7 @@ class ItemRow(QWidget):
             setattr(self, attr, start + (target - start) * v)
             self._sync_delete()
             self._sync_shadow()
+            self._place_confirm()
             self.update()
 
         tween = motion.Tween(self, duration, step, easing=easing)
@@ -725,12 +899,22 @@ class ItemRow(QWidget):
         tween.start()
 
     def enterEvent(self, e):
+        self._leave_later.stop()
         self._ease("_hover", 1.0, motion.HoverFx.IN_MS)
         super().enterEvent(e)
 
     def leaveEvent(self, e):
-        self._ease("_hover", 0.0, motion.HoverFx.OUT_MS)
+        """Eases the highlight out; a Delete pill first shrinks back into the ×, which then fades."""
+        if self._armed_on:
+            self._set_armed(False)
+            self._leave_later.start()
+        else:
+            self._ease("_hover", 0.0, motion.HoverFx.OUT_MS)
         super().leaveEvent(e)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._place_confirm()
 
     # --- Hold and drag -------------------------------------------------------
     def _pressed(self, e) -> None:
@@ -782,6 +966,7 @@ class ItemRow(QWidget):
         if self._press is None:
             return
         self._dragging = True
+        self._set_armed(False)
         # Drops any selection the press began; the caret stays where the press was.
         self.editor.setTextCursor(self.editor.cursorForPosition(self.editor.viewport().mapFromGlobal(self._press)))
         self.setCursor(Qt.ClosedHandCursor)

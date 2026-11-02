@@ -30,6 +30,7 @@ HANDOVER_MS = 180  # Blurred snapshot -> live acrylic.
 CROSSFADE_MS = 250  # Theme or language switch.
 ITEM_IN_MS = 200  # Text, todo and reminder rows.
 ITEM_OUT_MS = 160
+ITEM_DELETE_MS = 280  # A deleted row fading while the rows below cover it.
 BLUR_RADIUS = 28
 FRAME_MS = 16
 
@@ -364,6 +365,32 @@ def collapse_out(w: QWidget, duration: int = ITEM_OUT_MS) -> None:
         effect.setOpacity(1.0 - v)
 
     _run_item_tween(w, Tween(w, duration, step, w.deleteLater))
+
+
+def fade_out(w: QWidget, duration: int = ITEM_DELETE_MS) -> None:
+    """Fades a layout widget away while the widgets below glide up over it, then deletes it.
+
+    Its height closes from the bottom, so the rows below seem to slide up and cover it. The
+    widget is inert meanwhile; callers drop it from their own bookkeeping at once.
+
+    Args:
+        w: The widget to remove.
+        duration: Length of the animation in milliseconds.
+    """
+    w.blockSignals(True)
+    w.setAttribute(Qt.WA_TransparentForMouseEvents)
+    if w.focusWidget() is not None:
+        w.focusWidget().clearFocus()
+    h = w.height()
+    effect = QGraphicsOpacityEffect(w)
+    w.setGraphicsEffect(effect)
+    fade, close = QEasingCurve(QEasingCurve.OutCubic), QEasingCurve(QEasingCurve.InOutCubic)
+
+    def step(v: float) -> None:
+        effect.setOpacity(1.0 - fade.valueForProgress(v))
+        w.setMaximumHeight(round(h * (1.0 - close.valueForProgress(v))))
+
+    _run_item_tween(w, Tween(w, duration, step, w.deleteLater, easing=QEasingCurve.Linear))
 
 
 class BackdropFade:

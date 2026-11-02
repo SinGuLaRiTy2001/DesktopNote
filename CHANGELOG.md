@@ -12,6 +12,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Deleting an item takes two clicks: the **×** stretches into **Delete**, which removes the item,
+  so a stray click cannot. A deleted item fades while the items below move up over it.
 - Scrolling a note glides smoothly: the wheel, a click on the scroll track and a new row coming into view.
 - A note made from another note's menu starts fresh, with the default size and no colour tag;
   it still opens next to that note.

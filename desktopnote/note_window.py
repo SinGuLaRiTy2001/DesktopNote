@@ -563,12 +563,21 @@ class NoteWindow(GlassWindow):
         self._touch()
         return row
 
-    def _remove_row(self, row: ItemRow) -> int:
-        """Removes row and its item, collapsing the widget away; returns its former index."""
+    def _remove_row(self, row: ItemRow, deleted: bool = False) -> int:
+        """Removes row and its item, animating the widget away; returns its former index.
+
+        Args:
+            row: The row to remove.
+            deleted: Whether it was deleted on purpose: it fades while the rows below cover it.
+                Otherwise (an emptied row) it collapses quickly.
+        """
         idx = self.rows.index(row)
         self.rows.pop(idx)
         self.note.items.remove(row.item)
-        motion.collapse_out(row)  # Deletes the widget when done.
+        if deleted:
+            motion.fade_out(row)  # Deletes the widget when done.
+        else:
+            motion.collapse_out(row)
         self.placeholder.setVisible(not self.rows)
         self._touch()
         return idx
@@ -591,7 +600,7 @@ class NoteWindow(GlassWindow):
         self._touch()
 
     def _delete_row(self, row: ItemRow) -> None:
-        self._remove_row(row)
+        self._remove_row(row, deleted=True)
 
     def _new_after(self, row: ItemRow) -> None:
         """Handles Enter in row: continues the list, or ends it on an empty row."""

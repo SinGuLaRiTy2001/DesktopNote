@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from desktopnote.theme import (  # noqa: E402
     DARK, GLOW_PILL_FACTOR, GLOW_TITLE_FACTOR, LIFTED_ALPHA, LIGHT, TAGS, blend, glow_color,
 )
+from desktopnote.widgets import DeletePill, ItemRow  # noqa: E402
 
 EXTREME_CUSTOM = ["#000000", "#FFFFFF", "#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#808080", "#1B2A5A", "#FFF6DC"]
 
@@ -55,6 +56,12 @@ def over(rgba: str, bg: str) -> str:
     return "#" + "".join(f"{round(x * a + y * (1 - a)):02x}" for x, y in zip((r, g, b), under))
 
 
+def css(rgba: str, strength: float = 1.0) -> tuple[str, float]:
+    """Returns a CSS rgba(...) colour as (hex colour, alpha), with its alpha scaled by strength."""
+    r, g, b, a = (float(x) for x in rgba[rgba.index("(") + 1:-1].split(","))
+    return f"#{round(r):02x}{round(g):02x}{round(b):02x}", a * strength
+
+
 class ContrastTest(unittest.TestCase):
     """Checks foreground colours of both themes against the measured glass backgrounds."""
 
@@ -73,6 +80,11 @@ class ContrastTest(unittest.TestCase):
             menu_hovered = [over(t.menu_hover, bg) for bg in menu]  # The grey row highlight.
             # A row held for a drag: its tint over the (frosted) glass replaces the highlight.
             lifted = [blend(t.lifted_color(), LIFTED_ALPHA, bg) for bg in m["rows"]]
+            # An item's Delete pill: idle, hovered and pressed, over the hovered row on the glass.
+            row_hover = css(t.hover, ItemRow.HOVER_STRENGTH)
+            pills = [DeletePill.fill(t, hover, down) for hover, down in ((0.0, False), (1.0, False), (1.0, True))]
+            pill_fills = [blend(pill.name(), pill.alphaF(), blend(*row_hover, bg))
+                          for pill in pills for bg in m["rows"]]
             self.check(t, [
                 ("text, title", t.text, m["rows"], TEXT),
                 ("secondary text: done items, due dates, hints, title placeholder", t.secondary, m["rows"], TEXT),
@@ -86,6 +98,7 @@ class ContrastTest(unittest.TestCase):
                 ("lifted row: due soon (orange)", t.orange, lifted, TEXT),
                 ("lifted row: overdue (red)", t.red, lifted, TEXT),
                 ("lifted row: done check (tertiary)", t.tertiary, lifted, UI),
+                ("item Delete pill: text, idle and hovered", t.text, pill_fills, TEXT),
                 ("drag pill / pin, untagged (tertiary)", t.tertiary, m["pill_untagged"], UI),
                 ("popup text", t.text, m["popup"], TEXT),
                 ("popup secondary text, weekdays", t.secondary, m["popup"], TEXT),

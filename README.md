@@ -86,7 +86,7 @@ In edit mode, add items with the buttons at the bottom of the note.
 | End a list | `Enter` on an empty to-do |
 | Line break | `Enter` in a text item; `Shift` + `Enter` in a to-do or reminder |
 | Remove an empty item | `Backspace` on an empty item |
-| Delete an item | Hover over it and tap the **×** on the right |
+| Delete an item | Hover over it, tap the **×** on the right, then **Delete** |
 | Reorder items | Click and hold an item until it lifts, then drag it up or down (also outside edit mode) |
 | Tick a to-do | Tap the circle on the left |
 | Set a reminder's time | Tap **Add Time** (or the date) and pick a day and time; **Remove Time** clears it |
