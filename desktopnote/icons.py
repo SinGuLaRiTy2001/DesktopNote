@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import math
+import struct
 from functools import lru_cache
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QRectF, QSize, Qt
@@ -260,6 +261,27 @@ def _dot(fill: str | None, ring: str, size: int, dpr: float) -> QIcon:
     qicon = QIcon()
     qicon.addPixmap(pm)
     return qicon
+
+
+ICO_SIZES = (16, 20, 24, 32, 40, 48, 64, 256)  # Sizes Windows uses for icons.
+
+
+def app_ico() -> bytes:
+    """Returns the app icon as a multi-size .ico file with PNG-compressed images."""
+    images = []
+    for size in ICO_SIZES:
+        buffer = QBuffer()
+        buffer.open(QIODevice.WriteOnly)
+        pixmap("app", "#000000", size, 1.0).save(buffer, "PNG")
+        images.append((size, bytes(buffer.data())))
+    header = struct.pack("<HHH", 0, 1, len(images))
+    offset = len(header) + 16 * len(images)
+    entries, data = b"", b""
+    for size, png in images:
+        side = size if size < 256 else 0  # 0 stands for 256 in the ICO format.
+        entries += struct.pack("<BBBBHHII", side, side, 0, 0, 1, 32, len(png), offset + len(data))
+        data += png
+    return header + entries + data
 
 
 def app_icon() -> QIcon:

@@ -301,6 +301,74 @@ def autostart_command() -> str:
     return f'"{exe}" "{launcher}"'
 
 
+APP_ID = "DesktopNote.App"  # The AppUserModelID notifications are shown under.
+_APP_ID_KEY = rf"Software\Classes\AppUserModelId\{APP_ID}"
+
+
+def register_app_id(icon: str) -> None:
+    """Gives the process the app's AppUserModelID and registers its name and icon for it.
+
+    Args:
+        icon: Path of the app's .ico file.
+
+    Raises:
+        OSError: If the registry key cannot be written.
+    """
+    if not IS_WINDOWS:
+        return
+    import winreg
+
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, _APP_ID_KEY, 0, winreg.KEY_SET_VALUE) as key:
+        winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, "DesktopNote")
+        winreg.SetValueEx(key, "IconUri", 0, winreg.REG_SZ, icon)
+
+
+CREATE_NO_WINDOW = 0x08000000
+# Shows the toast in TOAST_XML under APP_ID, through the Windows Runtime notification API.
+_TOAST_SCRIPT = """
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+$xml.LoadXml(TOAST_XML)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier(TOAST_APP_ID).Show(
+    [Windows.UI.Notifications.ToastNotification]::new($xml))
+"""
+
+
+def toast_xml(title: str, text: str) -> str:
+    """Returns the toast XML for a notification with the lines ``title`` and ``text``."""
+    import html
+
+    return ('<toast><visual><binding template="ToastGeneric">'
+            f"<text>{html.escape(title)}</text><text>{html.escape(text)}</text>"
+            "</binding></visual></toast>")
+
+
+def show_toast(title: str, text: str) -> bool:
+    """Shows a Windows notification with ``title`` and ``text`` from a hidden PowerShell process.
+
+    Windows shows it under the name and icon set by register_app_id().
+
+    Returns:
+        Whether the notification could be handed to Windows.
+    """
+    if not IS_WINDOWS:
+        return False
+    import base64
+    import subprocess
+
+    quote = lambda value: "'" + value.replace("'", "''") + "'"  # noqa: E731
+    script = _TOAST_SCRIPT.replace("TOAST_XML", quote(toast_xml(title, text))).replace("TOAST_APP_ID", quote(APP_ID))
+    try:
+        subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand",
+                          base64.b64encode(script.encode("utf-16-le")).decode("ascii")],
+                         creationflags=CREATE_NO_WINDOW, close_fds=True)
+    except OSError:
+        return False
+    return True
+
+
 def set_autostart(enabled: bool) -> None:
     """Adds or removes the DesktopNote entry under the current user's Run registry key.
 

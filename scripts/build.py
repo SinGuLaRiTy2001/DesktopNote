@@ -16,7 +16,6 @@ import hashlib
 import os
 import re
 import shutil
-import struct
 import subprocess
 import sys
 import zipfile
@@ -44,7 +43,6 @@ PRUNE = [
     "PySide6/plugins/platforms/qoffscreen.dll", "PySide6/plugins/platforms/qminimal.dll",
     "PySide6/plugins/platforms/qdirect2d.dll",
 ]
-ICON_SIZES = (16, 20, 24, 32, 40, 48, 64, 256)
 RELEASE_FILES = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses"]
 
 
@@ -58,26 +56,12 @@ def write_icon(path: Path) -> None:
     """Writes the app icon as a multi-size .ico with PNG-compressed images."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     sys.path.insert(0, str(ROOT))
-    from PySide6.QtCore import QBuffer, QIODevice
     from PySide6.QtGui import QGuiApplication
 
     _app = QGuiApplication.instance() or QGuiApplication([])
     from desktopnote import icons
 
-    images = []
-    for size in ICON_SIZES:
-        buffer = QBuffer()
-        buffer.open(QIODevice.WriteOnly)
-        icons.pixmap("app", "#000000", size, 1.0).save(buffer, "PNG")
-        images.append((size, bytes(buffer.data())))
-    header = struct.pack("<HHH", 0, 1, len(images))
-    offset = len(header) + 16 * len(images)
-    entries, data = b"", b""
-    for size, png in images:
-        side = size if size < 256 else 0  # 0 stands for 256 in the ICO format.
-        entries += struct.pack("<BBBBHHII", side, side, 0, 0, 1, 32, len(png), offset + len(data))
-        data += png
-    path.write_bytes(header + entries + data)
+    path.write_bytes(icons.app_ico())
 
 
 def write_version_file(path: Path, ver: str) -> None:

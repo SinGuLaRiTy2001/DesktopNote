@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Reminder notifications show the note's title and the reminder under DesktopNote's name and icon.
+
 ## [1.0.0rc2] - 2026-11-02
 
 ### Added

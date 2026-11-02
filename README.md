@@ -127,7 +127,8 @@ prints one JSON object, `{"ok": true, ...}` or `{"ok": false, "error": "..."}`, 
 
 Notes and settings are stored in `notes.json` in `%APPDATA%\DesktopNote\`, with the previous
 version kept as `notes.json.bak`. To move your notes to another computer, copy this folder.
-Warnings and errors, if any, are logged to `desktopnote.log` in the same folder.
+Warnings and errors, if any, are logged to `desktopnote.log` in the same folder, and
+`DesktopNote.ico` is the icon on DesktopNote's notifications.
 
 ## How it's built
 

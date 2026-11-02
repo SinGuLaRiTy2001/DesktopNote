@@ -428,10 +428,10 @@ class DesktopNoteApp:
                         and reminder_state(item, soon_minutes, now) == "overdue"):
                     item.notified = True
                     fired = True
-                    # The app icon rather than the system warning triangle: a reminder is not an
-                    # alert.
                     heading = win.note.title.strip() or tr("reminder.heading")
-                    self.tray.showMessage(heading, item.text or tr("reminder.fallback"), icons.app_icon(), 8000)
+                    text = item.text or tr("reminder.fallback")
+                    if not win_effects.show_toast(heading, text):  # Falls back to a tray message.
+                        self.tray.showMessage(heading, text, icons.app_icon(), 8000)
         if fired:
             self.schedule_save()
 
@@ -681,15 +681,17 @@ def main() -> int:
         return 0
     _setup_logging()
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
-    if sys.platform == "win32":
-        import ctypes
-
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("DesktopNote.App")
-
     qapp = QApplication(sys.argv)
     qapp.setApplicationName("DesktopNote")
     qapp.setQuitOnLastWindowClosed(False)
     qapp.setWindowIcon(icons.app_icon())
+    # The name and icon Windows shows on the app's notifications.
+    icon_file = data_dir() / "DesktopNote.ico"
+    try:
+        icon_file.write_bytes(icons.app_ico())
+        win_effects.register_app_id(str(icon_file))
+    except OSError as exc:
+        log.warning("app id: %s", exc)
     # Menus get the app's own eased transitions (motion.py) instead of Qt's linear ones.
     qapp.setEffectEnabled(Qt.UI_AnimateMenu, False)
     qapp.setEffectEnabled(Qt.UI_FadeMenu, False)
