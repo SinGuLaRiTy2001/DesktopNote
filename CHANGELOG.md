@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Check for Updates in the About window; one click downloads and installs an update and restarts
+  the app. Notes and settings are kept.
+
 ### Changed
 
 - Reminder notifications show the note's title and the reminder under DesktopNote's name and icon.

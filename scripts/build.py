@@ -36,10 +36,12 @@ UNUSED_STDLIB = ["tkinter", "unittest", "pydoc", "doctest", "lib2to3", "sqlite3"
 # Files PyInstaller collects that the app never loads, relative to the _internal folder.
 PRUNE = [
     "PySide6/opengl32sw.dll",  # Software OpenGL fallback; the app draws with the raster engine.
-    "libcrypto-3-x64.dll", "libssl-3-x64.dll",  # OpenSSL for Qt's TLS plugin, removed below.
+    "libcrypto-3-x64.dll", "libssl-3-x64.dll",  # OpenSSL for Qt's OpenSSL TLS plugin, removed below.
     "PySide6/translations",  # Qt's own translations; the app ships its own texts.
     "PySide6/plugins/generic", "PySide6/plugins/iconengines", "PySide6/plugins/imageformats",
-    "PySide6/plugins/networkinformation", "PySide6/plugins/platforminputcontexts", "PySide6/plugins/tls",
+    "PySide6/plugins/networkinformation", "PySide6/plugins/platforminputcontexts",
+    # Update checks use HTTPS through Windows' own TLS (qschannelbackend.dll), so OpenSSL stays out.
+    "PySide6/plugins/tls/qopensslbackend.dll", "PySide6/plugins/tls/qcertonlybackend.dll",
     "PySide6/plugins/platforms/qoffscreen.dll", "PySide6/plugins/platforms/qminimal.dll",
     "PySide6/plugins/platforms/qdirect2d.dll",
 ]
@@ -152,6 +154,15 @@ def add_release_files() -> None:
             shutil.copy2(source, APP / name)
 
 
+def write_manifest() -> None:
+    """Lists the release's top-level files and folders in the manifest (see updates.MANIFEST).
+
+    An update replaces the files listed there and keeps any others in the app folder.
+    """
+    names = sorted(p.name for p in APP.iterdir())
+    (APP / "_internal" / "release-files.txt").write_text("\n".join(names) + "\n", encoding="utf-8")
+
+
 def package(ver: str) -> Path:
     """Zips the app folder and writes its SHA-256 checksum next to the zip."""
     archive = DIST / f"DesktopNote-{ver}-win64.zip"
@@ -196,6 +207,7 @@ def main() -> int:
     add_cli(icon, version_file)
     prune()  # After add_cli, so nothing it copies brings a pruned file back.
     add_release_files()
+    write_manifest()
     archive = package(ver)
     print(f"DesktopNote {ver}: folder {folder_mb(APP):.1f} MB, zip {archive.stat().st_size / 2**20:.1f} MB")
     print(f"  {archive}")

@@ -36,6 +36,9 @@ stay exactly where you left them.
   text size for all notes, and start at login.
 - **Automatic saving**: changes are saved as you type, and the previous version is kept as a
   backup.
+- **Updates**: check for a new version in the About window and install it with one click; notes
+  and settings are kept. A pre-release is also offered newer pre-releases. When run from source,
+  the release page opens instead.
 
 ## Getting started
 
@@ -100,7 +103,7 @@ In edit mode, add items with the buttons at the bottom of the note.
   choose one to jump to it.
 - **Settings** stay open while you change them. **Open Data Folder** shows where your notes are
   stored.
-- **About DesktopNote** shows the version and a link to this repository.
+- **About DesktopNote** shows the version, **Check for Updates** and a link to this repository.
 
 ### Scripts and AI agents
 
@@ -128,7 +131,10 @@ prints one JSON object, `{"ok": true, ...}` or `{"ok": false, "error": "..."}`, 
 Notes and settings are stored in `notes.json` in `%APPDATA%\DesktopNote\`, with the previous
 version kept as `notes.json.bak`. To move your notes to another computer, copy this folder.
 Warnings and errors, if any, are logged to `desktopnote.log` in the same folder, and
-`DesktopNote.ico` is the icon on DesktopNote's notifications.
+`DesktopNote.ico` is the icon on DesktopNote's notifications. Updates do not change this folder.
+
+DesktopNote connects to the internet only when you click **Check for Updates**: it asks GitHub
+for the latest release and, if you install it, downloads it from there.
 
 ## How it's built
 

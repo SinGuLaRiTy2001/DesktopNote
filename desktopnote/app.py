@@ -22,6 +22,7 @@ from .models import Item, Note
 from .note_window import GlassMenu, NoteWindow, glass_menu
 from .storage import Store, data_dir
 from .theme import DARK, FONT_FAMILIES, LIGHT, Theme, menu_qss, nearest_text_scale, tag_color
+from .updates import UpdateFlow
 from .widgets import GlassToolTip, SegmentedControl, TextSizeSlider, default_due, reminder_state
 
 log = logging.getLogger(__name__)
@@ -103,6 +104,9 @@ class DesktopNoteApp:
 
         self.reminder_timer = QTimer(interval=20_000)
         self.reminder_timer.timeout.connect(self.check_reminders)
+
+        self.updates = UpdateFlow(__version__, data_dir())  # Shown in the About window.
+        self.updates.quit_requested.connect(self.quit)  # The update installs once the app has quit.
 
         self._native_filter = _SystemEventFilter(self)
         qapp.installNativeEventFilter(self._native_filter)
@@ -585,7 +589,7 @@ class DesktopNoteApp:
             self.about.raise_()
             self.about.activateWindow()
         else:
-            self.about = AboutWindow(self.theme)
+            self.about = AboutWindow(self.theme, self.updates)
             self.about.popup()
 
     def _about_open(self) -> bool:

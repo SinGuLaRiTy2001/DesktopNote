@@ -21,6 +21,8 @@ library modules (see the lists at the top of `scripts/build.py`).
 - Explorer shows the exe's version and icon (Properties > Details).
 - `desktopnote-cli.exe list` prints the notes as JSON, and `desktopnote-cli.exe add todo test`
   shows the item at once in the running app.
+- After publishing: in the previous release, install the new one with About > Check for Updates
+  and check that it restarts with the notes unchanged.
 
 ## Publish
 

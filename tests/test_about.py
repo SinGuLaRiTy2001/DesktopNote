@@ -4,6 +4,7 @@ Builds real windows; CI runs them with QT_QPA_PLATFORM=offscreen.
 """
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -11,11 +12,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel, QToolButton  # noqa: E402
+from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel  # noqa: E402
 
 from desktopnote import __version__, about, i18n  # noqa: E402
 from desktopnote.about import AboutWindow  # noqa: E402
 from desktopnote.theme import DARK, LIGHT  # noqa: E402
+from desktopnote.updates import Release, UpdateFlow  # noqa: E402
 
 _app = QApplication.instance() or QApplication(sys.argv)
 _app.setQuitOnLastWindowClosed(False)
@@ -31,7 +33,8 @@ class AboutWindowTest(unittest.TestCase):
 
     def open(self, language, theme=LIGHT):
         i18n.set_language(language)
-        win = AboutWindow(theme)
+        self.flow = UpdateFlow(__version__, Path(tempfile.mkdtemp()))
+        win = AboutWindow(theme, self.flow)
         win.show()
         _app.processEvents()
         self.addCleanup(lambda: win.closing or win.close())  # A newer window may have closed it.
@@ -39,7 +42,7 @@ class AboutWindowTest(unittest.TestCase):
 
     @staticmethod
     def widgets(win):
-        return [w for w in (*win.findChildren(QLabel), *win.findChildren(QToolButton)) if w.text()]
+        return [w for w in (*win.findChildren(QLabel), *win.findChildren(QAbstractButton)) if w.text()]
 
     def test_shows_name_version_developer_and_link(self):
         for language in i18n.LANGUAGES:
@@ -49,7 +52,6 @@ class AboutWindowTest(unittest.TestCase):
                     self.assertIn(expected, texts)
 
     def test_no_copyright_notice(self):
-        # LGPL-3.0 section 4(c): showing a copyright notice would require Qt's notice beside it.
         for language in i18n.LANGUAGES:
             with self.subTest(language=language):
                 for w in self.widgets(self.open(language)):
@@ -67,9 +69,7 @@ class AboutWindowTest(unittest.TestCase):
         original, about.QDesktopServices = about.QDesktopServices, Services
         try:
             win = self.open("en")
-            for button in win.findChildren(QToolButton):
-                if button.objectName() == "link":
-                    button.click()
+            win.btn_github.click()
         finally:
             about.QDesktopServices = original
         self.assertEqual(opened, [about.REPO_URL])
@@ -82,6 +82,30 @@ class AboutWindowTest(unittest.TestCase):
                     for w in self.widgets(win):
                         self.assertGreaterEqual(w.width(), w.sizeHint().width(), f"{w.text()!r} is cut off")
                         self.assertLessEqual(w.mapTo(win, w.rect().topRight()).x(), win.width())
+
+    def test_the_version_row_offers_updates(self):
+        win = self.open("en")
+        flow = self.flow
+        self.assertEqual(win.btn_update.text(), "Check for Updates")
+        for state, text, enabled in (("checking", "Checking…", False), ("current", "Up to Date", True),
+                                     ("installing", "Updating…", False), ("failed", "Try Again", True)):
+            with self.subTest(state=state):
+                flow._set(state, error="offline" if state == "failed" else "")
+                self.assertEqual((win.btn_update.text(), win.btn_update.isEnabled()), (text, enabled))
+        self.assertEqual(win.btn_update.toolTip(), "offline", "a failure says why")
+        flow.release = Release("9.9.9", "https://example.invalid", "", "")
+        flow._set("available")
+        self.assertEqual(win.btn_update.text(), "Download 9.9.9", "from source it offers the download page")
+
+    def test_update_text_fades_to_the_newest(self):
+        win = self.open("en")
+        button = win.btn_update
+        self.flow._set("checking")
+        self.flow._set("current")
+        self.assertEqual(button.text(), "Up to Date", "text() is the new text at once")
+        QTest.qWait(about.TEXT_OUT_MS + about.TEXT_IN_MS + 200)
+        self.assertEqual((button._shown, round(button._opacity, 2)), ("Up to Date", 1.0))
+        self.assertGreaterEqual(button.width(), button.sizeHint().width())
 
     def test_escape_closes(self):
         win = self.open("en")

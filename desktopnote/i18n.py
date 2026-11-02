@@ -20,6 +20,14 @@ _STRINGS: dict[str, tuple[str, str]] = {
     "tray.settings": ("设置", "Settings"),
     "tray.about": ("关于 DesktopNote", "About DesktopNote"),
     "tray.quit": ("退出", "Quit"),
+    # Updates, in the About window.
+    "update.check": ("检查更新", "Check for Updates"),
+    "update.checking": ("正在检查…", "Checking…"),
+    "update.current": ("已是最新版本", "Up to Date"),
+    "update.install": ("更新到 {version}", "Update to {version}"),
+    "update.download": ("下载 {version}", "Download {version}"),
+    "update.installing": ("正在更新…", "Updating…"),
+    "update.retry": ("重试", "Try Again"),  # After a failed check or update; the tooltip says why.
     # About window.
     "about.version": ("版本 {version}", "Version {version}"),
     "about.developer": ("由文简使用 Claude Code 开发", "Developed by Jian Wen with Claude Code"),
