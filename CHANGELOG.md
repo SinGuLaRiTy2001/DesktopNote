@@ -10,6 +10,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Notes stick to the edges of every monitor, so a note can sit flush against an edge. To tuck a
   note away, push it on into the edge until it turns see-through and let go. This works on an
   edge between two monitors too; push further there to move the note across.
+- Switching an empty note to editing is one movement: the title opens while the hint glides
+  down and fades into its editing text.
 
 ## [1.0.0rc3] - 2026-11-02
 

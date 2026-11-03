@@ -11,7 +11,7 @@ from PySide6.QtGui import QColor, QCursor, QFont, QLinearGradient, QPainter, QPa
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
-    QGraphicsOpacityEffect,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -424,8 +424,10 @@ class NoteWindow(GlassWindow):
         self._flash = 0.0  # Tray-list highlight, 0..1.
         self._flash_tween: motion.Tween | None = None
         self._mode = 0.0  # 0 viewing .. 1 editing, at an even pace; each part eases on its own.
+        self._mode_from = self._mode_to = 0.0  # The mode level a switch runs from and to.
+        self._hint_mix = 0.0  # How far the empty-note hint shows its editing text, 0..1.
+        self._hint_mix_from = 0.0  # _hint_mix where the switch started.
         self._mode_tween: motion.Tween | None = None
-        self._placeholder_mode = "view"  # The mode whose hint text is shown.
 
         self.setWindowTitle("DesktopNote")
         self.setMouseTracking(True)
@@ -478,16 +480,26 @@ class NoteWindow(GlassWindow):
         # highlight); these margins plus that padding keep the text in its established position.
         self.content_lay.setContentsMargins(2, 1, 2, 7)
         self.content_lay.setSpacing(0)
-        self.placeholder = QLabel(self.content)
-        self.placeholder.setContentsMargins(4, 1, 4, 1)
+        # The empty-note hint: a text for each mode in the same place, cross-faded as it switches.
+        self.hint = QWidget(self.content)
+        hint_lay = QGridLayout(self.hint)
+        hint_lay.setContentsMargins(0, 0, 0, 0)
+        self.placeholder = QLabel(self.hint)  # Viewing mode.
+        self.placeholder_edit = QLabel(self.hint)
+        self._hint_fx = []
+        for label in (self.placeholder, self.placeholder_edit):
+            label.setContentsMargins(4, 1, 4, 1)
+            label.setObjectName("placeholder")
+            label.setTextFormat(Qt.RichText)  # The viewing hint embeds the toolbar's pencil icon.
+            label.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+            label.setWordWrap(True)
+            hint_lay.addWidget(label, 0, 0, Qt.AlignTop)
+            fx = motion.ShiftFade(label)
+            label.setGraphicsEffect(fx)
+            self._hint_fx.append(fx)
+        self._hint_fx[1].set(0.0)
         self._scale_hint()
-        self.placeholder.setObjectName("placeholder")
-        self.placeholder.setTextFormat(Qt.RichText)  # The hint embeds the toolbar's pencil icon.
-        self.placeholder.setAlignment(Qt.AlignCenter)
-        self.placeholder.setWordWrap(True)
-        self.content_lay.addWidget(self.placeholder)
-        self._placeholder_fx = QGraphicsOpacityEffect(self.placeholder)  # Fades as the mode switches.
-        self.placeholder.setGraphicsEffect(self._placeholder_fx)
+        self.content_lay.addWidget(self.hint)
         self.content_lay.addStretch(1)
         self.scroll.setWidget(self.content)
         root.addWidget(self.scroll, 1)
@@ -535,15 +547,12 @@ class NoteWindow(GlassWindow):
             row.retranslate()
 
     def _update_placeholder(self) -> None:
-        """Sets the empty-note hint for the shown mode, embedding the pencil icon in view mode."""
-        if self._placeholder_mode == "edit":
-            self.placeholder.setText(html.escape(tr("note.placeholder_edit")))
-        else:
-            icon_scale = 1 + (self.text_scale - 1) * ItemRow.ICON_FOLLOW  # Grows with the hint's text.
-            # Middle-aligned images sit 1-2 px below the hint's visual midline (measured at all
-            # sizes, for Latin and CJK alike), hence the lift.
-            pencil = icons.inline_img("pencil", self.theme.secondary, round(15 * icon_scale), lift=2.0)
-            self.placeholder.setText(html.escape(tr("note.placeholder_view")).replace("{icon}", pencil))
+        """Sets the empty-note hints of both modes, embedding the pencil icon in the viewing one."""
+        self.placeholder_edit.setText(html.escape(tr("note.placeholder_edit")))
+        icon_scale = 1 + (self.text_scale - 1) * ItemRow.ICON_FOLLOW  # Grows with the hint's text.
+        # Lifted onto the middle of the hint's text.
+        pencil = icons.inline_img("pencil", self.theme.secondary, round(15 * icon_scale), lift=2.0)
+        self.placeholder.setText(html.escape(tr("note.placeholder_view")).replace("{icon}", pencil))
 
     def _tool(self, slot) -> QToolButton:
         """Returns a toolbar icon button that calls slot when clicked."""
@@ -664,7 +673,7 @@ class NoteWindow(GlassWindow):
         self.rows.insert(index, row)
         self.content_lay.insertWidget(pos, row)
         row.set_editing(self.editing)
-        self.placeholder.setVisible(False)
+        self.hint.setVisible(False)
         return row
 
     def add_item(self, kind: str, index: int | None = None) -> ItemRow:
@@ -713,7 +722,7 @@ class NoteWindow(GlassWindow):
             if row.item is item:
                 self.rows.remove(row)
                 motion.fade_out(row)  # Deletes the widget when done.
-                self.placeholder.setVisible(not self.rows)
+                self.hint.setVisible(not self.rows)
                 return
 
     def _remove_row(self, row: ItemRow, deleted: bool = False) -> int:
@@ -731,7 +740,7 @@ class NoteWindow(GlassWindow):
             motion.fade_out(row)  # Deletes the widget when done.
         else:
             motion.collapse_out(row)
-        self.placeholder.setVisible(not self.rows)
+        self.hint.setVisible(not self.rows)
         self._touch()
         return idx
 
@@ -807,8 +816,8 @@ class NoteWindow(GlassWindow):
         for row in self.rows:
             row.set_editing(editing)
         self.title_edit.setReadOnly(not editing)
-        motion.fold(self.title_edit, editing or bool(self.note.title.strip()))
-        self.placeholder.setVisible(not self.rows)
+        motion.fold(self.title_edit, editing or bool(self.note.title.strip()), motion.MODE_MS)
+        self.hint.setVisible(not self.rows)
         self._ease_mode(1.0 if editing else 0.0)
         if not editing and self.focusWidget():
             self.focusWidget().clearFocus()
@@ -817,13 +826,14 @@ class NoteWindow(GlassWindow):
         """Eases the toolbar and the empty-note hint to editing (1) or viewing (0) mode.
 
         The pencil's background stretches into Done's, the add buttons rise and fade in one after
-        another from the left (and leave in reverse), and the hint fades out and back in with the
-        other mode's text. The switch runs at an even pace and each part eases on its own. It is
-        instant while the window is not on screen yet.
+        another from the left (and leave in reverse), and the hint cross-fades into the other
+        mode's text, in step with the title folding in or out. The switch runs at an even pace and
+        each part eases on its own. It is instant while the window is not on screen yet.
         """
         if self._mode_tween is not None:
             self._mode_tween.stop()
         start = self._mode
+        self._mode_from, self._mode_to, self._hint_mix_from = start, target, self._hint_mix
 
         def step(v: float) -> None:
             self._set_mode(start + (target - start) * v)
@@ -839,8 +849,8 @@ class NoteWindow(GlassWindow):
 
         Each part eases on its own: the pencil's background stretches into Done's (InOutCubic,
         with the pencil and Done easing out within it, see _ModeSlot), each add button eases out
-        over its own, overlapping share of the switch, and the hint eases out to the middle of
-        the switch and in again after it.
+        over its own, overlapping share of the switch, and the hint cross-fades over the whole
+        switch (OutCubic, as the title folds), the outgoing text faster.
         """
         self._mode = level
         cross, rise = QEasingCurve(QEasingCurve.InOutCubic), QEasingCurve(QEasingCurve.OutCubic)
@@ -853,11 +863,16 @@ class NoteWindow(GlassWindow):
             v = rise.valueForProgress(local)
             fx.set(v, dy=self.MODE_RISE * (1.0 - v))
             button.setVisible(level > 0.0)
-        half = abs(1.0 - 2.0 * level)  # 1 at either end, 0 halfway, when the text swaps.
-        self._placeholder_fx.setOpacity(QEasingCurve(QEasingCurve.OutCubic).valueForProgress(half))
-        if (level >= 0.5) != (self._placeholder_mode == "edit"):  # Swaps the text where it is hidden.
-            self._placeholder_mode = "edit" if level >= 0.5 else "view"
-            self._update_placeholder()
+        span = self._mode_to - self._mode_from
+        done = 1.0 if not span else max(0.0, min(1.0, (level - self._mode_from) / span))
+        mix = self._hint_mix_from + (self._mode_to - self._hint_mix_from) * rise.valueForProgress(done)
+        self._hint_mix = mix
+        if self._mode_to:  # The outgoing text fades faster than the new one comes in.
+            view, edit = (1.0 - mix) ** 2, mix
+        else:
+            view, edit = 1.0 - mix, mix ** 2
+        self._hint_fx[0].set(view)
+        self._hint_fx[1].set(edit)
 
     def refresh_reminders(self, now: datetime | None = None) -> None:
         """Updates the due state of every reminder row relative to now (default: current time)."""
@@ -984,6 +999,7 @@ class NoteWindow(GlassWindow):
         font = QFont(self.placeholder.font())
         font.setPointSizeF(BODY_PT * self.text_scale)
         self.placeholder.setFont(font)
+        self.placeholder_edit.setFont(font)
 
     def bring_to_front(self) -> None:
         """Shows the note above other apps' windows.

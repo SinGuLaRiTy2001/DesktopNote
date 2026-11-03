@@ -68,14 +68,20 @@ class EditModeTest(unittest.TestCase):
         self.assertEqual(self.win.btn_edit.geometry().right(), self.win.mode_slot.rect().right(),
                          "the pencil stays put")
 
-    def test_the_hint_swaps_text_while_hidden(self):
-        view_text = self.win.placeholder.text()
+    def test_the_hint_cross_fades_in_place(self):
+        view, edit = self.win.placeholder, self.win.placeholder_edit
+        self.assertEqual((self.opacity(view), self.opacity(edit)), (1.0, 0.0))
         self.win.set_editing(True)
-        QTest.qWait(motion.MODE_MS // 4)
-        self.assertEqual(self.win.placeholder.text(), view_text, "the old text fades out first")
+        QTest.qWait(motion.MODE_MS // 3)
+        self.assertTrue(0.0 < self.opacity(edit) < 1.0, "the new text fades in")
+        self.assertAlmostEqual(self.opacity(view), (1.0 - self.opacity(edit)) ** 2, places=6,
+                               msg="the old text fades out faster")
+        self.assertEqual(view.geometry().topLeft(), edit.geometry().topLeft(), "in the same place")
         QTest.qWait(motion.MODE_MS)
-        self.assertNotEqual(self.win.placeholder.text(), view_text)
-        self.assertEqual(self.opacity(self.win.placeholder), 1.0)
+        self.assertEqual((self.opacity(view), self.opacity(edit)), (0.0, 1.0))
+        self.win.set_editing(False)
+        QTest.qWait(motion.MODE_MS + 100)
+        self.assertEqual((self.opacity(view), self.opacity(edit)), (1.0, 0.0))
 
 
 if __name__ == "__main__":
