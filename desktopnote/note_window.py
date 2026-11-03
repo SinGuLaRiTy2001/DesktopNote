@@ -1082,16 +1082,23 @@ class NoteWindow(GlassWindow):
 
     def mouseMoveEvent(self, e):
         """Shows a resize cursor over the edges and corners."""
-        edges = self._edges_at(e.position().toPoint())
-        cursor = self._CURSORS.get(edges)
+        self._show_resize_cursor(e.position().toPoint())
+        super().mouseMoveEvent(e)
+
+    def enterEvent(self, e):
+        """Shows a resize cursor if the cursor comes in over an edge or a corner."""
+        self._show_resize_cursor(self.mapFromGlobal(QCursor.pos()))
+        super().enterEvent(e)
+
+    def _show_resize_cursor(self, pos: QPoint) -> None:
+        """Sets the resize cursor for the edges at pos, or the default cursor away from them."""
+        cursor = self._CURSORS.get(self._edges_at(pos))
         if cursor is None:
             self.unsetCursor()
             self._cursor_watch.stop()
         else:
             self.setCursor(cursor)
-            # Rows reach into the resize zone and would otherwise inherit this cursor.
-            self._cursor_watch.start()
-        super().mouseMoveEvent(e)
+            self._cursor_watch.start()  # Unsets it once the cursor is off the edges.
 
     def _check_resize_cursor(self) -> None:
         """Drops the resize cursor once the cursor has left the edges."""
