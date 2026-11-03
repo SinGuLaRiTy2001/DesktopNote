@@ -99,7 +99,7 @@ class ContrastTest(unittest.TestCase):
                 ("lifted row: overdue (red)", t.red, lifted, TEXT),
                 ("lifted row: done check (tertiary)", t.tertiary, lifted, UI),
                 ("item Delete pill: text, idle and hovered", t.text, pill_fills, TEXT),
-                ("drag pill / pin, untagged (tertiary)", t.tertiary, m["pill_untagged"], UI),
+                ("pin, untagged (tertiary)", t.tertiary, m["pill_untagged"], UI),
                 ("popup text", t.text, m["popup"], TEXT),
                 ("popup secondary text, weekdays", t.secondary, m["popup"], TEXT),
                 ("popup tertiary icons", t.tertiary, m["popup"], UI),
@@ -111,8 +111,22 @@ class ContrastTest(unittest.TestCase):
                 ("white on highlight / selection", "#ffffff", [t.accent_fill], TEXT),
             ])
 
+    def test_drag_pill_shows_on_any_glass(self):
+        """Keeps the translucent drag pill visible, idle and held, over plain and tagged glass."""
+        for name, t in (("light", LIGHT), ("dark", DARK)):
+            backgrounds = list(MEASURED[name]["pill_untagged"])
+            for color in [c for c in TAGS.values() if c] + EXTREME_CUSTOM:
+                glow = glow_color(t, color)
+                backgrounds += [blend(glow.name(), glow.alphaF() * GLOW_PILL_FACTOR, glass)
+                                for glass in MEASURED[name]["pill_untagged"]]
+            for state, alpha in zip(("idle", "held"), t.pill_alpha):
+                for bg in backgrounds:
+                    with self.subTest(theme=name, state=state, bg=bg):
+                        pill = blend(t.pill_shade, alpha, bg)
+                        self.assertGreaterEqual(round(contrast(pill, bg), 2), UI)
+
     def test_tag_glows_keep_pill_and_title_readable(self):
-        """Keeps the drag pill and the title legible under every preset and extreme tag glow."""
+        """Keeps the pin mark and the title legible under every preset and extreme tag glow."""
         for name, t in (("light", LIGHT), ("dark", DARK)):
             for color in [c for c in TAGS.values() if c] + EXTREME_CUSTOM:
                 glow = glow_color(t, color)
@@ -121,7 +135,7 @@ class ContrastTest(unittest.TestCase):
                     pill_bg = blend(glow.name(), glow.alphaF() * GLOW_PILL_FACTOR, glass)
                     title_bg = blend(glow.name(), glow.alphaF() * GLOW_TITLE_FACTOR, glass)
                     with self.subTest(theme=name, color=color, glass=glass):
-                        self.assertGreaterEqual(round(contrast(t.secondary, pill_bg), 2), UI, "lifted pill / pin")
+                        self.assertGreaterEqual(round(contrast(t.secondary, pill_bg), 2), UI, "lifted pin")
                         self.assertGreaterEqual(round(contrast(t.text, title_bg), 2), TEXT, "title")
 
 

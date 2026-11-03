@@ -2535,16 +2535,17 @@ class TagPicker(QWidget):
 class Grabber(QWidget):
     """Pill-shaped drag handle; dragging it moves the whole note window.
 
+    The pill is a translucent shade over the glass and its tag colour. Hovered or held, it grows
+    wider and stronger.
+
     Attributes:
         theme: The theme used for drawing.
-        lifted: Whether to draw one grey step stronger, to stay visible over a tag glow.
         level: Hover level, eased from 0 to 1.
     """
 
     def __init__(self, theme: Theme, parent=None):
         super().__init__(parent)
         self.theme = theme
-        self.lifted = False
         self.level = 0.0
         self._tween: motion.Tween | None = None
         self.setFixedSize(120, 18)
@@ -2582,14 +2583,9 @@ class Grabber(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         level = self.level
         w = 36 + 8 * level
-        theme = self.theme
-        if self.lifted:
-            idle, hot = QColor(theme.secondary), QColor(theme.text)
-        else:
-            idle, hot = QColor(theme.tertiary), QColor(theme.secondary)
-        color = QColor(round(idle.red() + (hot.red() - idle.red()) * level),
-                       round(idle.green() + (hot.green() - idle.green()) * level),
-                       round(idle.blue() + (hot.blue() - idle.blue()) * level), 220)
+        idle, hot = self.theme.pill_alpha
+        color = QColor(self.theme.pill_shade)
+        color.setAlphaF(idle + (hot - idle) * level)
         rect = QRectF((self.width() - w) / 2, 6, w, 5)
         p.setPen(Qt.NoPen)
         p.setBrush(color)

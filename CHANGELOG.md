@@ -14,6 +14,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
   down and fades into its editing text.
 - A tucked-away note always stays above other windows and shows the pin mark; Keep on Top is
   unavailable for it.
+- The bar at the top of a note is translucent and takes on the note's colour.
 
 ### Fixed
 

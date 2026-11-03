@@ -92,6 +92,8 @@ class Theme:
         fill_alpha: Alpha of the note's own fill over the system acrylic (higher is more opaque).
         solid_fill: Opaque glass colour of a note at an edge when what is behind it could not be
             grabbed.
+        pill_shade: Colour of the translucent drag pill.
+        pill_alpha: Opacity of the drag pill, idle and hovered or held.
         glow_ref: Typical glass colour the tag glow is judged against.
         glow_delta_e: Perceived difference (CIE76 delta E) from glow_ref the tag glow aims for at
             the top edge, so any tag colour reads equally strong.
@@ -120,6 +122,8 @@ class Theme:
     acrylic_saturation: float
     fill_alpha: int
     solid_fill: str
+    pill_shade: str
+    pill_alpha: tuple[float, float]
     # Tag glow: any colour is fitted so it reads equally strong while the pill and the title keep
     # their contrast (see glow_color).
     glow_ref: str
@@ -171,6 +175,8 @@ LIGHT = Theme(
     # Opaque enough to stay readable on any desktop (measured), yet still visibly glass.
     fill_alpha=0xB8,  # About #D8 over a black desktop.
     solid_fill="#E4E4E6",
+    pill_shade="#000000",
+    pill_alpha=(0.48, 0.56),
     glow_ref="#E6E6E8",
     glow_delta_e=20.0,  # The strength of the earlier hand-tuned glows.
     menu_bg="rgba(246,246,248,0.97)",
@@ -199,6 +205,8 @@ DARK = Theme(
     acrylic_saturation=2.0,
     fill_alpha=0xC0,  # About #39 over a white desktop.
     solid_fill="#2D2D2F",
+    pill_shade="#FFFFFF",
+    pill_alpha=(0.6, 0.72),
     glow_ref="#2C2C2E",
     glow_delta_e=36.0,
     menu_bg="rgba(44,44,46,0.97)",

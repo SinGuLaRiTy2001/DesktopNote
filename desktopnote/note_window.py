@@ -945,9 +945,8 @@ class NoteWindow(GlassWindow):
         popup.popup_at(btn.mapToGlobal(QPoint(btn.width() - popup.sizeHint().width(), btn.height())))
 
     def _sync_top_bar(self) -> None:
-        """Lifts the grey pill and pin a step over a tag glow, so they don't sink into it."""
+        """Draws the pin mark a grey step stronger over a tag glow."""
         lifted = tag_color(self.note.tint) is not None
-        self.grabber.lifted = lifted
         self.grabber.update()
         self.pin_mark.setPixmap(icons.pixmap("pin", self.theme.secondary if lifted else self.theme.tertiary, 13))
 
