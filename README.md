@@ -27,8 +27,9 @@ stay exactly where you left them.
 - **Titles and keep-on-top**: give a note an optional title, or keep it above other windows.
 - **Snap to align**: drag a note close to another and it snaps next to it, edges aligned; near
   the edge of a monitor, it sticks to that edge.
-- **Dock to edge**: push a note into the left, right or top edge of any monitor to tuck it away;
-  it slides out when the cursor comes to it.
+- **Dock to edge**: push a note into the left, right or top edge of any monitor to tuck it away,
+  leaving a thin strip. It slides out when the cursor comes to the strip and stays above other
+  windows.
 - **Tray menu**: create notes, bring them all to the front, jump to one note by name, and change
   settings.
 - **Scripts and AI agents**: a command line shows notes as JSON, makes notes and adds, changes or
@@ -75,7 +76,10 @@ To build the release zip, see [docs/RELEASING.md](docs/RELEASING.md).
 |---|---|
 | New note | Tray menu → **New Note**, or **⋯** → **New Note** on any note |
 | Move | Drag the bar at the top of the note |
-| Tuck away at an edge | Drag the note against an edge and push on until it sinks in, then let go |
+| Tuck away at an edge | Drag the note against the left, right or top edge of a monitor and push on until it turns see-through, then let go |
+| Show a tucked-away note | Move the cursor onto its strip at the edge (on an edge between two monitors, rest it there a moment), or pick the note in the tray menu |
+| Untuck a note | Drag it away from the edge |
+| Move to another monitor | Drag it across; at the edge between the monitors, push on through |
 | Resize | Drag an edge or a corner |
 | Edit | Double-click the note, or tap the pencil at the bottom right |
 | Finish editing | Tap **Done**, or press `Esc` |

@@ -6,7 +6,7 @@ import math
 from ctypes import wintypes
 from datetime import datetime
 
-from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -380,7 +380,8 @@ class NoteWindow(GlassWindow):
 
     The window is frameless and paints its own rounded glass over the system acrylic (or a blur
     fallback), with an optional tag-colour glow along the top. It resizes from its edges, moves by
-    its grabber (snapping next to nearby notes, hiding at a screen edge), and switches between viewing and editing mode.
+    its grabber (snapping next to nearby notes and monitor edges, hiding at an edge), and switches
+    between viewing and editing mode.
 
     Signals:
         changed: Content or geometry changed and should be persisted.
@@ -411,7 +412,7 @@ class NoteWindow(GlassWindow):
         self.soon_minutes = soon_minutes
         self.editing = False
         self.rows: list[ItemRow] = []
-        self._snap_move = SnapMove(self, self._on_drag_move)  # Snap to align while dragged.
+        self._snap_move = SnapMove(self)  # Snap to align while dragged.
         self.dock = EdgeDock(self)
         self._moved = False  # Whether the current move or resize moved the window.
         self._snap_target: NoteWindow | None = None  # The note this one is snapped to.
@@ -431,7 +432,9 @@ class NoteWindow(GlassWindow):
         self.setMinimumSize(MIN_SIZE)
         self._apply_flags()
 
-        root = QVBoxLayout(self)
+        self.body = QWidget(self)  # Holds everything; slides within the window (see set_content_shift).
+        self.body.setMouseTracking(True)
+        root = QVBoxLayout(self.body)
         root.setContentsMargins(EDGE, 2, EDGE - 2, EDGE - 1)
         root.setSpacing(0)
 
@@ -580,7 +583,7 @@ class NoteWindow(GlassWindow):
     def _fit_minimum_width(self) -> None:
         """Keeps the note at least as wide as its delete confirmation in this language."""
         bar = self.bottom.widget(1).layout()
-        margins, root = bar.contentsMargins(), self.layout().contentsMargins()
+        margins, root = bar.contentsMargins(), self.body.layout().contentsMargins()
         needed = (margins.left() + margins.right() + root.left() + root.right() + 2 * bar.spacing()
                   + sum(w.sizeHint().width() for w in (self.confirm_label, self.btn_cancel, self.btn_confirm_delete)))
         width = max(MIN_SIZE.width(), needed)
@@ -1120,11 +1123,25 @@ class NoteWindow(GlassWindow):
 
     def moveEvent(self, e):
         super().moveEvent(e)
+        self.dock.window_moved()
         self._sync_geometry()
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
+        self.body.setGeometry(QRect(self.content_shift, self.size()))
         self._sync_geometry()
+
+    def set_content_shift(self, shift: QPoint) -> None:
+        """Draws the note moved by shift within its window, cut off at the window's edges.
+
+        Widgets with a graphics effect are redrawn at their new place.
+        """
+        self.content_shift = QPoint(shift)
+        self.body.move(shift)
+        for widget in self.body.findChildren(QWidget):
+            if widget.graphicsEffect() is not None:
+                widget.update()
+        self.update()
 
     def _sync_geometry(self) -> None:
         """Copies the window geometry into the note and emits changed if it differs.
@@ -1151,10 +1168,7 @@ class NoteWindow(GlassWindow):
                               [win.dock.snap_alignment() for win, _ in notes])
         index = self._snap_move.snapped_to()
         self._show_snap_target(notes[index][0] if index is not None else None)
-
-    def _on_drag_move(self, rect: tuple[int, int, int, int], ahead: tuple[int, int, int, int] | None) -> None:
-        """Lets the dock show whether letting go hides the note (see EdgeDock.follow_drag)."""
-        self.dock.follow_drag(rect, self._snap_move.pushed(), self._snap_move.stuck(), ahead)
+        self.dock.follow_drag(self._snap_move.pushed(), self._snap_move.stuck())
 
     def _show_snap_target(self, target: "NoteWindow | None") -> None:
         """Keeps the note snapped to slid out while it is the target."""
@@ -1178,8 +1192,6 @@ class NoteWindow(GlassWindow):
                 self._moved = False
                 self._snap_move.begin()
                 self.dock.drag_started()
-            if msg.message == win_effects.WM_WINDOWPOSCHANGED:
-                self.dock.window_moved()
             if msg.message == win_effects.WM_MOVING:
                 self._moved = True
                 self._snap(wintypes.RECT.from_address(msg.lParam))

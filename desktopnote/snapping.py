@@ -17,8 +17,7 @@ GAP = 4  # Space in px left between snapped notes.
 GLIDE_MS = 160  # Glide into and out of a snapped place.
 GLIDE_EASING = QEasingCurve.OutQuint
 PUSH = 40  # How far in px past an edge a note stuck to it must be pushed to hide there.
-UNPUSH = 12  # How far in px a pushed note must be pulled back to stop hiding.
-SINK = 24  # How far in px a pushed note sinks into the edge, showing that letting go hides it.
+UNPUSH = 12  # How far in px a pushed note must be pulled back to end the push.
 CROSS = PUSH + RELEASE  # How far in px past an edge between two monitors a note crosses over.
 HIDE_EDGES = ("left", "right", "top")  # The edges a note hides at.
 
@@ -159,11 +158,11 @@ def continues(monitor: Rect, edge: str, rect: Rect, monitors: list[tuple[Rect, R
 class EdgeSnapper:
     """Decides, move by move, whether a dragged note sticks to a monitor edge or is pushed into it.
 
-    The edges are those of each monitor's work area, so the taskbar's edge counts. A note sticks
+    The edges are those of each monitor's work area, the taskbar's edge included. A note sticks
     flush to an edge once it comes within ``distance`` of it, or passes it between two moves, and
     comes free when pulled more than ``release`` back. Pushed ``push`` past a left, right or top
-    edge, or with the cursor against the end of the screen there, it sinks in by ``sink``: let go,
-    it hides at that edge; pulled ``unpush`` back, it comes out again. Pushed ``cross`` past an
+    edge, or with the cursor against the end of the screen there, it is pushed into that edge,
+    where letting go hides it; pulled ``unpush`` back, the push ends. Pushed ``cross`` past an
     edge that another monitor continues, it crosses over, and that line does not catch it again
     until the note is clear of it. A bottom edge lets go ``release`` past it. Values are in px.
 
@@ -173,9 +172,9 @@ class EdgeSnapper:
     """
 
     def __init__(self, distance: int = DISTANCE, release: int = RELEASE, push: int = PUSH,
-                 cross: int = CROSS, sink: int = SINK, unpush: int = UNPUSH):
+                 cross: int = CROSS, unpush: int = UNPUSH):
         self.distance, self.release, self.push = distance, release, push
-        self.cross, self.sink, self.unpush = cross, sink, unpush
+        self.cross, self.unpush = cross, unpush
         self.stuck: dict[str, Stick] = {}
         self.pushed: str | None = None
         self._last: Rect | None = None  # The note's rect at the previous move.
@@ -191,8 +190,8 @@ class EdgeSnapper:
             cursor: The cursor position.
             scale: Factor applied to all distances (the display's pixel ratio).
         """
-        distance, release, push, cross, sink, unpush = (
-            round(v * scale) for v in (self.distance, self.release, self.push, self.cross, self.sink, self.unpush))
+        distance, release, push, cross, unpush = (
+            round(v * scale) for v in (self.distance, self.release, self.push, self.cross, self.unpush))
         last, self._last = self._last, rect
 
         def frees_at(stick: Stick) -> float:
@@ -243,13 +242,12 @@ class EdgeSnapper:
         width, height = rect[2] - rect[0], rect[3] - rect[1]
         for stick in self.stuck.values():
             work, edge = stick.work, stick.edge
-            sunk = sink if edge == self.pushed else 0
             if edge == "left":
-                place[0] = work[0] - sunk
+                place[0] = work[0]
             elif edge == "right":
-                place[0] = work[2] - width + sunk
+                place[0] = work[2] - width
             elif edge == "top":
-                place[1] = work[1] - sunk
+                place[1] = work[1]
             else:
                 place[1] = work[3] - height
         return place[0], place[1]
@@ -305,23 +303,20 @@ def _at_end(stick: Stick, cursor: Point, monitors: list[tuple[Rect, Rect]], slac
 class SnapMove(QObject):
     """Snaps a window during its native drag and glides it into and out of place.
 
-    Windows proposes each drag position relative to the last one, so positions are worked out
-    from where the drag started. Call begin() on WM_ENTERSIZEMOVE, place() on every WM_MOVING
-    and stop() on WM_EXITSIZEMOVE. Snapping next to a note wins over sticking to an edge.
+    Positions are worked out from where the drag started. Call begin() on WM_ENTERSIZEMOVE,
+    place() on every WM_MOVING and stop() on WM_EXITSIZEMOVE. Snapping next to a note wins over
+    sticking to an edge.
+
+    Attributes:
+        cancelled: Whether Esc ended the last drag, putting the window back.
     """
 
-    def __init__(self, window, moving=None):
-        """Initialises the helper.
-
-        Args:
-            window: The top-level QWidget dragged.
-            moving: Called just before the drag moves the window, with its next (left, top,
-                right, bottom) in physical pixels and, while it glides, where it will be a frame
-                later (else None).
-        """
+    def __init__(self, window):
+        """Initialises the helper for window, a top-level QWidget."""
         super().__init__(window)
         self._window = window
-        self._moving = moving
+        self.cancelled = False
+        self._at: Point | None = None  # Where the drag last put the window.
         self._origin: tuple[Rect, Point] | None = None  # Window rect and cursor at the drag start.
         self._snapper = Snapper()
         self._edges = EdgeSnapper()
@@ -332,20 +327,8 @@ class SnapMove(QObject):
         return int(self._window.winId())
 
     def _move(self, x: int, y: int) -> None:
-        self._report(x, y)
+        self._at = (x, y)
         win_effects.move_window(self._hwnd(), x, y)
-
-    def _report(self, x: int, y: int) -> None:
-        """Tells the moving callback that the window is about to move to (x, y)."""
-        if self._moving is None or self._origin is None:
-            return
-        left, top, right, bottom = self._origin[0]
-        width, height = right - left, bottom - top
-        ahead = None
-        if self._glide.is_running():
-            ahead_x, ahead_y = self._glide.position(self._glide.frame_ms())
-            ahead = (ahead_x, ahead_y, ahead_x + width, ahead_y + height)
-        self._moving((x, y, x + width, y + height), ahead)
 
     def begin(self) -> None:
         """Starts a new move or resize from the window's current place."""
@@ -354,14 +337,18 @@ class SnapMove(QObject):
         self._snapper = Snapper()
         self._edges = EdgeSnapper()
         self._monitors = win_effects.monitors()
+        self.cancelled, self._at = False, None
         self._glide.stop()
 
     def stop(self) -> None:
-        """Ends the drag, finishing a running glide at once."""
+        """Ends the drag, finishing a running glide at once unless Esc put the window back."""
+        here = win_effects.window_rect(self._hwnd())
+        self.cancelled = self._at is not None and here is not None and here[:2] != self._at
         if self._glide.is_running():
             target = self._glide.target
             self._glide.stop()
-            self._move(*target)
+            if not self.cancelled:
+                self._move(*target)
         self._origin = None
 
     def snapped_to(self) -> int | None:
@@ -369,12 +356,12 @@ class SnapMove(QObject):
         return self._snapper.held_other
 
     def stuck(self) -> list[Stick]:
-        """Returns the monitor edges the window sticks to; none while it is snapped to a note."""
-        return [] if self._snapper.held else list(self._edges.stuck.values())
+        """Returns the monitor edges the window sticks to; none while snapped to a note."""
+        return [] if self._snapper.held or self.cancelled else list(self._edges.stuck.values())
 
     def pushed(self) -> Stick | None:
         """Returns the edge the window is pushed into, where letting go hides it, or None."""
-        return None if self._snapper.held else self._edges.pushed_stick()
+        return None if self._snapper.held or self.cancelled else self._edges.pushed_stick()
 
     def _state(self) -> tuple:
         """Returns what, apart from the cursor, decides where the window goes."""
@@ -401,11 +388,11 @@ class SnapMove(QObject):
         snapped = self._snapper.update(free, others, scale, aligned)
         edge_x, edge_y = self._edges.update(free, self._monitors, cursor, scale)
         target = snapped or (free[0] if edge_x is None else edge_x, free[1] if edge_y is None else edge_y)
-        if self._state() != before:  # Snapping in, sinking or coming free: glide from where it is.
+        if self._state() != before:  # Snapping in, sticking or coming free: glide from where it is.
             here = win_effects.window_rect(self._hwnd())
             self._glide.start(here[:2] if here else self._glide.position(), target)
         else:
             self._glide.target = target
         x, y = self._glide.position()
         rect.left, rect.top, rect.right, rect.bottom = x, y, x + right - left, y + bottom - top
-        self._report(x, y)
+        self._at = (x, y)

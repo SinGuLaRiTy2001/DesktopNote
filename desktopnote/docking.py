@@ -2,8 +2,10 @@
 
 A note let go while pushed into a left, right or top edge (see snapping.EdgeSnapper) docks: it
 stays above other windows, slides out when the cursor reaches it and back once the cursor has
-left. While slid in, it is solid and clipped to its monitor's work area. While docked, ``note.x``
-and ``note.y`` hold the slid-out position.
+left. It slides within its window, opaque and in one piece, frosted by a snapshot of what is
+behind it, and a ShadowWindow casts its shadow. Pushed into an edge or slid in, it eases to
+HIDDEN_OPACITY; slid in, it lets clicks through. While docked, ``note.x`` and ``note.y`` hold
+the slid-out position.
 """
 from __future__ import annotations
 
@@ -14,19 +16,22 @@ from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from . import motion, win_effects
-from .snapping import GAP, HIDE_EDGES, SINK, Rect, Stick, continues, overlap, past_edge
+from .glass import ShadowWindow
+from .snapping import GAP, HIDE_EDGES, Rect, Stick, continues, overlap, past_edge
 
-PEEK = 12  # Px of a hidden note left on screen; its texts start further in.
-HIDDEN_OPACITY = 0.8
-FADE_MS = 160  # Fade into HIDDEN_OPACITY when a note opens hidden.
+PEEK = 12  # Px of a hidden note left on screen.
+HIDDEN_OPACITY = 0.8  # Opacity of a note pushed into an edge or slid in.
+FADE_MS = 160  # Fade to or from HIDDEN_OPACITY.
 KEEP_MARGIN = 8  # Px around a revealed note within which the cursor keeps it out.
 HIDE_DELAY_MS = 150  # How long the cursor must be away before a revealed note slides back.
-REVEAL_DELAY_MS = 120  # How long the cursor must rest on a note hidden between two monitors.
+REVEAL_DELAY_MS = 60  # How long the cursor must rest on a note hidden between two monitors.
+APPROACH = 64  # Px from a hidden note within which the cursor gets its backdrop ready.
+FRESH_MS = 1000  # How long a backdrop snapshot is used for a note sliding out.
 HOLD_MS = 3000  # How long a note revealed from the tray stays out if the cursor never comes.
 SLIDE_MS = 320  # Slide out.
 SLIDE_IN_MS = 240  # Slide back.
 SLIDE_EASING = QEasingCurve.OutCubic
-POLL_MS = 50  # Cursor checks while docked.
+POLL_MS = 16  # Cursor checks while docked.
 
 
 def revealed_rect(rect: QRect, area: QRect, edge: str) -> QRect:
@@ -43,13 +48,14 @@ def revealed_rect(rect: QRect, area: QRect, edge: str) -> QRect:
     return out
 
 
-def hidden_pos(revealed: QRect, area: QRect, edge: str) -> QPoint:
-    """Returns the top-left of a note hidden at edge, with PEEK px of it left on screen."""
-    if edge == "left":
-        return QPoint(area.left() - revealed.width() + PEEK, revealed.top())
-    if edge == "right":
-        return QPoint(area.right() + 1 - PEEK, revealed.top())
-    return QPoint(revealed.left(), area.top() - revealed.height() + PEEK)
+def hidden_depth(revealed: QRect, edge: str) -> int:
+    """Returns how far a note slides into edge to hide, leaving PEEK px of it."""
+    return (revealed.height() if edge == "top" else revealed.width()) - PEEK
+
+
+def shift_into(edge: str, depth: int) -> QPoint:
+    """Returns the shift that moves a note depth px into edge."""
+    return {"left": QPoint(-depth, 0), "right": QPoint(depth, 0), "top": QPoint(0, -depth)}.get(edge, QPoint())
 
 
 def reveal_zone(revealed: QRect, area: QRect, edge: str) -> QRect:
@@ -61,34 +67,8 @@ def reveal_zone(revealed: QRect, area: QRect, edge: str) -> QRect:
     return QRect(revealed.left(), area.top(), revealed.width(), PEEK)
 
 
-def _shown_area(clip: Rect | None, rect: Rect) -> int:
-    """Returns how much of a window at rect a clip shows: all of it if clip is None."""
-    left, top, right, bottom = clip or (0, 0, rect[2] - rect[0], rect[3] - rect[1])
-    return (right - left) * (bottom - top)
-
-
-def _within(a: Rect | None, b: Rect | None) -> Rect | None:
-    """Returns the part of a window two clips share; None stands for all of it."""
-    if a is None or b is None:
-        return a or b
-    left, top = max(a[0], b[0]), max(a[1], b[1])
-    return left, top, max(left, min(a[2], b[2])), max(top, min(a[3], b[3]))
-
-
-def visible_part(rect: Rect, work: Rect) -> Rect | None:
-    """Returns the part of rect inside work, relative to rect's top-left; None if it is all inside.
-
-    Rects are (left, top, right, bottom), right and bottom exclusive.
-    """
-    left, top = max(rect[0], work[0]), max(rect[1], work[1])
-    right, bottom = max(left, min(rect[2], work[2])), max(top, min(rect[3], work[3]))
-    if (left, top, right, bottom) == tuple(rect):
-        return None
-    return left - rect[0], top - rect[1], right - rect[0], bottom - rect[1]
-
-
 class EdgeDock(QObject):
-    """Docks a note window at a screen edge and slides it out and back.
+    """Docks a note window at a screen edge and slides the note out and back.
 
     Attributes:
         edge: The edge the note is docked to ("left", "right" or "top"), or "" if none.
@@ -105,17 +85,19 @@ class EdgeDock(QObject):
         self._screen_name = ""
         self._work: Rect | None = None  # The work area of the dock's monitor, in physical px.
         self._shared = False  # Another monitor continues past the dock's edge.
-        self._clip: Rect | None = None  # The part of the window shown, or None for all of it.
-        self._ahead: Rect | None = None  # Where a gliding window will be a frame later.
+        self._depth = 0  # How far the note is slid into its edge, in px.
+        self._pushed = ""  # The edge a dragged note is pushed into.
         self._dragging = False
-        self._sinking: Stick | None = None  # The edge the dragged note sinks into.
         self._snapped_to = False  # A dragged note is snapped to this one.
         self._wait_for_leave = False  # Hidden by a push: the cursor must leave before it reveals.
+        self._shadow: ShadowWindow | None = None
+        self._casting = False  # The ShadowWindow casts the note's shadow, not the note itself.
         self._away = QElapsedTimer()  # Runs while the cursor is away from a revealed note.
         self._hold = QElapsedTimer()  # Runs while a tray reveal holds the note out.
         self._resting = QElapsedTimer()  # Runs while the cursor rests on a hidden note.
-        self._glide = motion.WindowGlide(self, SLIDE_MS, self._glide_step, SLIDE_EASING)
-        self._fades_with_slide = False  # The glide is a slide, not settling after a drop.
+        self._frosted = QElapsedTimer()  # Runs from the last backdrop snapshot.
+        self._slide_glide = motion.WindowGlide(self, SLIDE_MS, self._slide_step, SLIDE_EASING)
+        self._settle = motion.WindowGlide(self, SLIDE_MS, self._move_to, SLIDE_EASING)
         self._fade: motion.Tween | None = None
         self._poll = QTimer(self)
         self._poll.setInterval(POLL_MS)
@@ -127,32 +109,8 @@ class EdgeDock(QObject):
         return int(self._window.winId())
 
     def _move_to(self, x: int, y: int) -> None:
-        """Moves the note to (x, y); move() would misplace these frameless windows by 8 px."""
+        """Moves the note to (x, y), keeping its size."""
         self._window.setGeometry(x, y, self._window.width(), self._window.height())
-
-    def _glide_step(self, x: int, y: int) -> None:
-        """Moves the window one frame; during a slide, its opacity follows its position."""
-        size = self._window.size()
-        target = self._physical(QRect(QPoint(x, y), size))
-        self._ahead = None
-        if self._glide.is_running():
-            self._ahead = self._physical(QRect(QPoint(*self._glide.position(self._glide.frame_ms())), size))
-        if target is not None:
-            self._update_clip(target, shrink_only=True)
-        self._move_to(x, y)
-        if not self._glide.is_running():
-            self._keep_on_monitor()
-            self._update_clip()
-        if not self._fades_with_slide:
-            return
-        revealed = self._revealed()
-        hidden = hidden_pos(revealed, self._area, self.edge)
-        if self.edge == "top":
-            span, gone = hidden.y() - revealed.y(), y - revealed.y()
-        else:
-            span, gone = hidden.x() - revealed.x(), x - revealed.x()
-        hidden_part = max(0.0, min(1.0, gone / span)) if span else 0.0
-        self._window.setWindowOpacity(1.0 - (1.0 - HIDDEN_OPACITY) * hidden_part)
 
     def _revealed(self) -> QRect:
         note = self._window.note
@@ -162,8 +120,14 @@ class EdgeDock(QObject):
         note = self._window.note
         note.x, note.y, note.w, note.h = rect.x(), rect.y(), rect.width(), rect.height()
 
+    def _place(self, rect: QRect) -> None:
+        """Keeps rect as the slid-out place and moves the window there."""
+        self._set_revealed(rect)
+        if self._window.geometry().topLeft() != rect.topLeft():
+            self._move_to(rect.x(), rect.y())
+
     def _physical(self, rect: QRect) -> Rect | None:
-        """Returns rect in physical pixels, measured from where the window is."""
+        """Returns rect in physical pixels, relative to where the window is now."""
         native = win_effects.window_rect(self._hwnd())
         if native is None:
             return None
@@ -173,17 +137,14 @@ class EdgeDock(QObject):
         return native[0] + dx, native[1] + dy, native[2] + dx + dw, native[3] + dy + dh
 
     def _keep_on_monitor(self) -> None:
-        """Moves a slid-out note inside its monitor's work area if it reaches past the edge."""
+        """Moves a docked window inside its monitor's work area if it reaches past the edge."""
         here, work = win_effects.window_rect(self._hwnd()), self._work
-        if not (self.edge and self.shown and here and work):
+        if not (self.edge and here and work):
             return
         past = past_edge(here, work, self.edge)
         if past > 0:
             step = math.ceil(past / self._window.devicePixelRatioF())
-            inward = {"left": (step, 0), "right": (-step, 0), "top": (0, step)}[self.edge]
-            revealed = self._revealed().translated(*inward)
-            self._set_revealed(revealed)
-            self._move_to(revealed.x(), revealed.y())
+            self._place(self._revealed().translated(-shift_into(self.edge, step)))
             self._window.changed.emit()
 
     def _screen_for(self, rect: QRect):
@@ -194,43 +155,20 @@ class EdgeDock(QObject):
             best = QGuiApplication.screenAt(rect.center()) or QGuiApplication.primaryScreen()
         return best
 
-    def _update_clip(self, rect: Rect | None = None, shrink_only: bool = False, force: bool = False) -> None:
-        """Clips a solid window to its monitor's work area.
-
-        A gliding window is also clipped to where it will be a frame later.
-
-        Args:
-            rect: Where the window is, in physical px; by default where it is now.
-            shrink_only: Only clips more of the window away; for calls just before the window
-                moves to rect.
-            force: Sets the clip even if it seems unchanged, e.g. after the window's flags changed.
-        """
-        rect = rect or win_effects.window_rect(self._hwnd())
-        work = self._sinking.work if self._sinking is not None else self._work
-        clip = None
-        if self._window.solid and rect and work:
-            clip = visible_part(rect, work)
-            if self._ahead is not None:
-                clip = _within(clip, visible_part(self._ahead, work))
-        if shrink_only and _shown_area(clip, rect) >= _shown_area(self._clip, rect):
-            return
-        if clip != self._clip or force:
-            self._clip = clip
-            win_effects.clip_window(self._hwnd(), clip)
-
-    def window_moved(self) -> None:
-        """Fits the clip of a solid or clipped window to where it is; call on WM_WINDOWPOSCHANGED."""
-        if self._window.solid or self._clip is not None:
-            self._update_clip()
-
     def is_hidden(self) -> bool:
         """Returns whether the note is docked and slid in."""
         return bool(self.edge) and not self.shown
 
     def place_beside(self, width: int, height: int) -> QPoint | None:
-        """Returns where a note made from this one opens, so this one cannot cover it.
+        """Returns where a note made from this one opens.
 
-        That is next to it on the inner side of the screen, or None if this note is not docked.
+        Args:
+            width: The new note's width.
+            height: The new note's height.
+
+        Returns:
+            Its top-left, next to this note on the inner side of the screen; None if this note
+            is not docked.
         """
         if not self.edge:
             return None
@@ -250,58 +188,138 @@ class EdgeDock(QObject):
         return self.edge or None
 
     def snap_rect(self) -> tuple[int, int, int, int] | None:
-        """Returns the rect other notes snap to, in physical pixels; the slid-out one if docked."""
-        if not self.edge:
-            return win_effects.window_rect(self._hwnd())
-        return self._physical(self._revealed())
+        """Returns the rect other notes snap to, in physical pixels: the window's, docked or not."""
+        return win_effects.window_rect(self._hwnd())
+
+    # --- Frosted look --------------------------------------------------------
+
+    def _frost(self, rect: QRect) -> None:
+        """Takes a frosted snapshot of what is behind rect, the note's backdrop while solid."""
+        hwnds = [self._hwnd()]
+        if self._shadow is not None:
+            hwnds.append(int(self._shadow.winId()))
+        for hwnd in hwnds:
+            win_effects.set_capture_excluded(hwnd, True)
+        pm = motion.acrylic_stand_in(rect, self._window.theme.acrylic_saturation)
+        for hwnd in hwnds:
+            win_effects.set_capture_excluded(hwnd, False)
+        self._window.backdrop = (QRect(rect), pm) if pm is not None else None
+        self._frosted.start()
+
+    def _frost_fresh(self) -> None:
+        """Takes a backdrop snapshot of the slid-out place unless one was taken just now."""
+        backdrop = self._window.backdrop
+        if (backdrop is None or backdrop[0] != self._revealed() or not self._frosted.isValid()
+                or self._frosted.elapsed() > FRESH_MS):
+            self._frost(self._revealed())
+
+    def _band(self, edge: str) -> QRect:
+        """Returns the strip of the screen along edge that a note pushed into it can move in."""
+        geo = self._window.geometry()
+        area = self._screen_for(geo).availableGeometry()
+        if edge == "top":
+            return QRect(area.left(), geo.y(), area.width(), geo.height())
+        return QRect(geo.x(), area.top(), geo.width(), area.height())
+
+    def _shadow_window(self) -> ShadowWindow:
+        """Returns the note's ShadowWindow, creating it on first use."""
+        if self._shadow is None:
+            self._shadow = ShadowWindow(self._window.theme)
+            self._window.destroyed.connect(self._shadow.close)
+        return self._shadow
+
+    def _cast_shadow(self) -> None:
+        """Casts the shadow of the part of the note on screen, fading as it slides in.
+
+        The ShadowWindow takes over the note's own shadow once the note starts sliding.
+        """
+        if self._window.solid and self._depth > 0 and not self._casting:
+            self._casting = True
+        if not (self._window.solid and self._casting):
+            if self._shadow is not None:
+                self._shadow.cast(QRect(), 0.0, self._hwnd())
+            return
+        geo = self._window.geometry()
+        part = geo.translated(self._window.content_shift).intersected(geo)
+        span = hidden_depth(geo, self.edge)
+        strength = self._window.windowOpacity() * (1.0 - self._depth / span if span else 1.0)
+        self._shadow_window().cast(part, strength, self._hwnd())
+        self._window.set_solid(True, shadow=False)
+
+    def _go_solid(self) -> None:
+        """Turns the glass into its frosted stand-in, keeping its own shadow until it slides."""
+        if not self._window.solid:
+            self._window.set_solid(True, shadow=True)
+            self._cast_shadow()
+
+    def _show_glass(self) -> None:
+        """Gives the note its frosted glass and its own shadow back."""
+        if self._window.solid:
+            self._casting = False
+            self._window.set_solid(False)
+            self._cast_shadow()
+        else:
+            self._window.reapply_glass()
+
+    def _set_opacity(self, opacity: float) -> None:
+        """Sets the window opacity; the shadow follows."""
+        self._window.setWindowOpacity(opacity)
+        self._cast_shadow()
+
+    def window_moved(self) -> None:
+        """Keeps the backdrop and the shadow of a solid note in place while it is dragged."""
+        if self._window.solid:
+            self._window.update()
+            self._cast_shadow()
 
     # --- Docking -------------------------------------------------------------
 
     def restore(self) -> None:
-        """Puts a note saved as docked into its hidden place before it is shown."""
+        """Docks a note saved as docked, slid in, before it is shown."""
         revealed = self._dock_to(self._revealed(), self._window.note.dock)
         if revealed is None:
             self._window.note.dock = ""
             return
-        self._set_revealed(revealed)
+        self._place(revealed)
         self.shown = False
-        self._window.set_solid(True)  # Clipped once the window is shown (see window_moved).
-        self._move_to(*hidden_pos(revealed, self._area, self.edge).toTuple())
+        self._frost(revealed)
+        self._depth = hidden_depth(revealed, self.edge)
+        self._casting = True
+        self._window.set_solid(True)
+        self._set_depth(self._depth)
+        win_effects.set_click_through(self._hwnd(), True)
 
     def drag_started(self) -> None:
-        """Pauses sliding while the note is moved or resized."""
+        """Pauses sliding while the note is moved or resized; the note comes out as live glass."""
         self._dragging = True
-        self._glide.stop()
+        self._settle.stop()
+        if self._slide_glide.is_running() or self._depth or self._window.solid:
+            self._slide_glide.stop()
+            self._set_depth(0)
+            self._set_opacity(1.0)
+            self._show_glass()
 
-    def follow_drag(self, rect: Rect, pushed: Stick | None, stuck: list[Stick], ahead: Rect | None = None) -> None:
+    def follow_drag(self, pushed: Stick | None, stuck: list[Stick]) -> None:
         """Shows, while the note is dragged, whether letting go hides it.
 
-        Pushed into an edge, the note turns into a hidden note as it sinks in, and back as it
-        comes out again. Call just before each move of the drag.
+        Pushed into an edge, the note eases to HIDDEN_OPACITY; when the push ends, it eases back.
 
         Args:
-            rect: Where the drag moves the window next, in physical px.
             pushed: The edge the note is pushed into, or None.
             stuck: The edges the note sticks to.
-            ahead: Where the window will be a frame later while it glides, else None.
         """
-        self._ahead = ahead
-        if pushed is not None:
-            self._sinking = pushed
-            self._window.set_solid(True)
-        sinking = self._sinking
-        if sinking is None:
+        if stuck:
+            self._shadow_window()
+        edge = pushed.edge if pushed is not None else ""
+        if edge == self._pushed:
             return
-        depth = past_edge(rect, sinking.work, sinking.edge)
-        if pushed is None and (depth <= 0 or sinking not in stuck):  # Out again, or came free.
-            self._sinking = None
-            self._window.setWindowOpacity(1.0)
-            self._window.set_solid(False)
-            self._update_clip(rect)
-            return
-        sunk = max(0.0, min(1.0, depth / (SINK * self._window.devicePixelRatioF())))
-        self._window.setWindowOpacity(1.0 - (1.0 - HIDDEN_OPACITY) * sunk)
-        self._update_clip(rect, shrink_only=True)
+        self._pushed = edge
+        if edge:
+            self._frost(self._band(edge))
+            self._go_solid()
+            self._fade_to(HIDDEN_OPACITY)
+        else:
+            self._fade_to(1.0, self._show_glass)
 
     def drag_finished(self, moved: bool, stuck: list[Stick], pushed: Stick | None) -> None:
         """Docks, keeps or undocks the note after a move or resize.
@@ -315,25 +333,21 @@ class EdgeDock(QObject):
             pushed: The edge it was pushed into, or None.
         """
         self._dragging = False
-        sinking, self._sinking, self._ahead = self._sinking, None, None
-        here = win_effects.window_rect(self._hwnd())
-        if pushed is not None and (here is None or past_edge(here, pushed.work, pushed.edge) <= 0):
-            pushed = None  # Esc ended the drag and put the note back.
-        if pushed is None and sinking is not None:
-            self._window.setWindowOpacity(1.0)
-            self._window.set_solid(False)
-            self._update_clip()
+        self._pushed = ""
         geo = self._window.geometry()
         revealed = self._dock_to(geo, pushed.edge) if pushed is not None else None
         if revealed is not None:
-            self._set_revealed(revealed)
+            self._place(revealed)
             self.shown = False
             self._wait_for_leave = True
             self._hold.invalidate()
-            self._slide(hidden_pos(revealed, self._area, self.edge), duration=SLIDE_IN_MS, fade=False)
-            self._fade_to(HIDDEN_OPACITY)
+            win_effects.set_click_through(self._hwnd(), True)
+            self._go_solid()
+            self._slide(hidden_depth(revealed, self.edge), self._fade_in_place, SLIDE_IN_MS)
             self._window.changed.emit()
             return
+        if self._window.solid:
+            self._fade_to(1.0, self._show_glass)  # The push ended without hiding the note.
         if not self.edge:
             return
         if moved and not any(stick.edge == self.edge and stick.work == self._work for stick in stuck):
@@ -343,13 +357,15 @@ class EdgeDock(QObject):
         self._set_revealed(revealed)
         self.shown = True
         self._away.invalidate()
-        self._fades_with_slide = False  # Settles against the edge fully opaque.
-        self._glide.duration = SLIDE_MS
-        self._glide.start((geo.x(), geo.y()), (revealed.x(), revealed.y()))
+        self._settle.start((geo.x(), geo.y()), (revealed.x(), revealed.y()), self._keep_on_monitor)
         self._window.changed.emit()
 
     def _dock_to(self, rect: QRect, edge: str) -> QRect | None:
         """Docks to an edge of the screen showing most of rect.
+
+        Args:
+            rect: Where the note is.
+            edge: "left", "right" or "top".
 
         Returns:
             Where the note is slid out, flush against that edge; None if edge is not one to dock to.
@@ -372,12 +388,15 @@ class EdgeDock(QObject):
         """Puts a docked note back above other windows, e.g. after its flags changed."""
         if self.edge:
             win_effects.set_topmost(self._hwnd(), True)
-            self._update_clip(force=True)
+            win_effects.set_click_through(self._hwnd(), self.is_hidden())
+            self._cast_shadow()
 
     def settle(self) -> None:
         """Fades a note that opened hidden once it has appeared."""
         if self.is_hidden():
+            self._shadow_window()
             self._fade_to(HIDDEN_OPACITY)
+            self._keep_on_monitor()
 
     def _undock(self) -> None:
         """Turns the note back into a normal one where it is."""
@@ -385,7 +404,10 @@ class EdgeDock(QObject):
             self.edge, self.shown = "", False
             self._window.note.dock = ""
             self._poll.stop()
-            self._fade_to(1.0)
+            self._slide_glide.stop()
+            self._set_depth(0)
+            win_effects.set_click_through(self._hwnd(), False)
+            self._fade_to(1.0, self._show_glass)
             win_effects.set_topmost(self._hwnd(), self._window.note.pinned)
             self._window.changed.emit()
 
@@ -398,12 +420,43 @@ class EdgeDock(QObject):
         if not self.edge:
             return False
         revealed = self._dock_to(self._revealed(), self.edge)
-        self._set_revealed(revealed)
-        self._move_to(*(revealed.topLeft() if self.shown else hidden_pos(revealed, self._area, self.edge)).toTuple())
-        self._update_clip()
+        self._place(revealed)
+        if not self._slide_glide.is_running():
+            self._set_depth(0 if self.shown else hidden_depth(revealed, self.edge))
+        self._keep_on_monitor()
         return True
 
     # --- Sliding -------------------------------------------------------------
+
+    def _set_depth(self, depth: int) -> None:
+        """Slides the note depth px into its edge within the window."""
+        self._depth = depth
+        self._window.set_content_shift(shift_into(self.edge, depth))
+        self._cast_shadow()
+
+    def _slide_step(self, depth: int, _unused: int) -> None:
+        """Moves the note one frame of a slide."""
+        self._set_depth(depth)
+
+    def _slide(self, depth: int, on_done=None, duration: int = SLIDE_MS) -> None:
+        """Slides the note to depth px into its edge, fully opaque.
+
+        Args:
+            depth: How far into the edge it slides.
+            on_done: Called once it is there.
+            duration: Length of the slide in milliseconds.
+        """
+        self._slide_glide.duration = duration
+        here = self._slide_glide.position() if self._slide_glide.is_running() else (self._depth, 0)
+        if self._fade is not None:
+            self._fade.stop()
+        self._set_opacity(1.0)
+        self._slide_glide.start(here, (depth, 0), on_done)
+
+    def _fade_in_place(self) -> None:
+        """Eases a note that has slid in to HIDDEN_OPACITY."""
+        if self.is_hidden():
+            self._fade_to(HIDDEN_OPACITY)
 
     def reveal(self, hold: bool = False) -> None:
         """Slides a docked note out.
@@ -418,18 +471,24 @@ class EdgeDock(QObject):
         if not self.shown:
             self.shown = True
             self._away.invalidate()
+            win_effects.set_click_through(self._hwnd(), False)
+            self._frost_fresh()
+            self._window.update()
             self._window.raise_()
             self.keep_on_top()
             self._window.unsetCursor()
-            self._slide(self._revealed().topLeft(), self._show_glass)
+            self._slide(0)
 
     def hide(self) -> None:
-        """Slides a docked note back to the edge."""
+        """Slides a docked note back into its edge."""
         if self.edge and self.shown:
             self.shown = False
             self._hold.invalidate()
-            self._window.set_solid(True)
-            self._slide(hidden_pos(self._revealed(), self._area, self.edge), duration=SLIDE_IN_MS)
+            win_effects.set_click_through(self._hwnd(), True)
+            if not self._window.solid:  # Live glass after a move.
+                self._frost(self._revealed())
+                self._go_solid()
+            self._slide(hidden_depth(self._revealed(), self.edge), self._fade_in_place, SLIDE_IN_MS)
 
     def hold_for_snap(self, on: bool) -> None:
         """Keeps a docked note slid out while a dragged note is snapped to it (on)."""
@@ -441,48 +500,21 @@ class EdgeDock(QObject):
         else:
             self._away.invalidate()
 
-    def _slide(self, to: QPoint, on_done=None, duration: int = SLIDE_MS, fade: bool = True) -> None:
-        """Slides the window to to.
-
-        Args:
-            to: The top-left to slide to.
-            on_done: Called once it is there.
-            duration: Length of the slide in milliseconds.
-            fade: Whether the opacity follows the position (see _glide_step).
-        """
-        if self._fade is not None:
-            self._fade.stop()
-        self._fades_with_slide = fade
-        self._glide.duration = duration
-        geo = self._window.geometry()
-        here = self._glide.position() if self._glide.is_running() else (geo.x(), geo.y())
-        self._glide.start(here, (to.x(), to.y()), on_done)
-
-    def _show_glass(self) -> None:
-        """Gives a slid-out note its frosted glass back, which Windows drops while translucent."""
-        if self._window.solid:
-            self._window.set_solid(False)
-            self._update_clip()
-        else:
-            self._window.reapply_glass()
-
-    def _fade_to(self, opacity: float) -> None:
-        """Eases the window opacity to opacity, restoring the glass at 1."""
+    def _fade_to(self, opacity: float, on_done=None) -> None:
+        """Eases the window opacity to opacity, then calls on_done if given."""
         if self._fade is not None:
             self._fade.stop()
         start = self._window.windowOpacity()
 
         def step(v: float) -> None:
-            self._window.setWindowOpacity(start + (opacity - start) * v)
-
-        def done() -> None:
-            if opacity >= 1.0:
-                self._show_glass()
+            self._set_opacity(start + (opacity - start) * v)
 
         if abs(start - opacity) < 0.01:
-            done()
+            self._set_opacity(opacity)
+            if on_done is not None:
+                on_done()
             return
-        self._fade = motion.Tween(self, FADE_MS, step, done)
+        self._fade = motion.Tween(self, FADE_MS, step, on_done)
         self._fade.start()
 
     def _keeps_out(self, cursor: QPoint) -> bool:
@@ -491,18 +523,22 @@ class EdgeDock(QObject):
             return True
         near = self._revealed().adjusted(-KEEP_MARGIN, -KEEP_MARGIN, KEEP_MARGIN, KEEP_MARGIN)
         if near.contains(cursor) or reveal_zone(self._revealed(), self._area, self.edge).contains(cursor):
-            self._hold.invalidate()  # The cursor came, so leaving now hides it.
+            self._hold.invalidate()  # From now on, the cursor leaving hides it.
             return True
         return self._hold.isValid() and self._hold.elapsed() < HOLD_MS
 
     def _check_cursor(self) -> None:
+        """Slides the note out or back as the cursor comes to it or leaves it."""
         if self._dragging or not self._window.isVisible():
             return
         cursor = QCursor.pos()
         if not self.shown:
             screen = QGuiApplication.screenAt(cursor)
             on_screen = screen is not None and screen.name() == self._screen_name
-            if not (on_screen and reveal_zone(self._revealed(), self._area, self.edge).contains(cursor)):
+            zone = reveal_zone(self._revealed(), self._area, self.edge)
+            if zone.adjusted(-APPROACH, -APPROACH, APPROACH, APPROACH).contains(cursor):
+                self._frost_fresh()
+            if not (on_screen and zone.contains(cursor)):
                 self._wait_for_leave = False
                 self._resting.invalidate()
             elif self._wait_for_leave or win_effects.left_button_down():

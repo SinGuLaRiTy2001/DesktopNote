@@ -9,7 +9,7 @@ Windows drops a window's acrylic while its opacity is below 1, so the transition
 from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, QElapsedTimer, QEvent, QObject, QPoint, QPointF, QRect, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPainterPath, QPixmap
+from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
     QAbstractButton,
     QGraphicsBlurEffect,
@@ -34,6 +34,7 @@ ITEM_OUT_MS = 160
 MODE_MS = 240  # Switching between viewing and editing.
 ITEM_DELETE_MS = 280  # A deleted row fading while the rows below cover it.
 BLUR_RADIUS = 28
+STAND_IN_SCALE = 8  # The acrylic stand-in is computed this many times smaller than its area.
 FRAME_MS = 16
 
 
@@ -155,21 +156,13 @@ class WindowGlide(QObject):
         """Returns whether a glide is in progress."""
         return self._timer.isActive()
 
-    def position(self, ahead_ms: float = 0) -> tuple[int, int]:
-        """Returns the current position: the target plus what is left of the offset.
-
-        Args:
-            ahead_ms: Returns the position this many milliseconds from now instead.
-        """
+    def position(self) -> tuple[int, int]:
+        """Returns the current position: the target plus what is left of the offset."""
         left = 0.0
         if self._timer.isActive():
-            progress = (self._clock.elapsed() + ahead_ms) / self.duration
+            progress = self._clock.elapsed() / self.duration
             left = 0.0 if progress >= 1 else 1.0 - self._curve.valueForProgress(progress)
         return round(self.target[0] + self._offset[0] * left), round(self.target[1] + self._offset[1] * left)
-
-    def frame_ms(self) -> int:
-        """Returns the time between two frames of the glide in milliseconds."""
-        return self._timer.interval()
 
     def _tick(self) -> None:
         done = self._clock.elapsed() >= self.duration
@@ -265,6 +258,44 @@ def blurred_backdrop(rect: QRect, tint: QColor, radius: int = BLUR_RADIUS) -> QP
     out = out.copy(pad_px, pad_px, out.width() - 2 * pad_px, out.height() - 2 * pad_px)
     out.setDevicePixelRatio(dpr)
     return out
+
+
+def acrylic_stand_in(rect: QRect, saturation: float, tint: QColor | None = None) -> QPixmap | None:
+    """Returns a stand-in for the system acrylic behind rect: blurred, saturated and tinted.
+
+    The result is STAND_IN_SCALE times smaller than rect; draw it scaled to rect, smoothly.
+
+    Args:
+        rect: The area, in global coordinates.
+        saturation: Factor applied to the colour saturation of the blurred snapshot.
+        tint: Colour painted over it, if any.
+
+    Returns:
+        The pixmap, or None if the screen could not be grabbed.
+    """
+    pad = BLUR_RADIUS * 2  # The margin around rect grabbed for the blur.
+    pm = grab_screen(rect.adjusted(-pad, -pad, pad, pad))
+    if pm is None:
+        return None
+    dpr = pm.devicePixelRatio()
+    small = pm.toImage().scaled(max(1, pm.width() // STAND_IN_SCALE), max(1, pm.height() // STAND_IN_SCALE),
+                                Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+    img = blur(QPixmap.fromImage(small), BLUR_RADIUS * dpr / STAND_IN_SCALE).toImage()
+    img = img.convertToFormat(QImage.Format_RGB32)
+    data = bytearray(img.constBits())
+    for i in range(0, len(data), 4):  # Bytes are blue, green, red, unused.
+        b, g, r = data[i], data[i + 1], data[i + 2]
+        luma = 0.0722 * b + 0.7152 * g + 0.2126 * r
+        data[i] = max(0, min(255, round(luma + (b - luma) * saturation)))
+        data[i + 1] = max(0, min(255, round(luma + (g - luma) * saturation)))
+        data[i + 2] = max(0, min(255, round(luma + (r - luma) * saturation)))
+    img = QImage(bytes(data), img.width(), img.height(), img.bytesPerLine(), QImage.Format_RGB32).copy()
+    if tint is not None:
+        p = QPainter(img)
+        p.fillRect(img.rect(), tint)
+        p.end()
+    margin = round(pad * dpr / STAND_IN_SCALE)
+    return QPixmap.fromImage(img.copy(margin, margin, img.width() - 2 * margin, img.height() - 2 * margin))
 
 
 # --- Appearing ---------------------------------------------------------------
@@ -454,9 +485,9 @@ class BackdropFade:
         alpha: Current opacity of the snapshot, 0..1.
     """
 
-    def __init__(self, w: QWidget, tint: QColor):
+    def __init__(self, w: QWidget, tint: QColor, saturation: float):
         self.w = w
-        self.pixmap = blurred_backdrop(w.geometry(), tint)
+        self.pixmap = acrylic_stand_in(w.geometry(), saturation, tint)
         self.alpha = 1.0
 
     def hand_over(self) -> None:
@@ -479,6 +510,7 @@ class BackdropFade:
         p.save()
         p.setClipPath(clip)
         p.setOpacity(self.alpha)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
         p.drawPixmap(self.w.rect(), self.pixmap)
         p.restore()
 

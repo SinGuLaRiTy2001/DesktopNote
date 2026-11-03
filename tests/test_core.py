@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6.QtCore import QPoint, QRect  # noqa: E402
 
 from desktopnote import i18n  # noqa: E402
-from desktopnote.docking import hidden_pos, reveal_zone, revealed_rect, visible_part  # noqa: E402
+from desktopnote.docking import hidden_depth, reveal_zone, revealed_rect, shift_into  # noqa: E402
 from desktopnote.instance import claim  # noqa: E402
 from desktopnote.models import Item, Note  # noqa: E402
 from desktopnote.snapping import EdgeSnapper, Snapper  # noqa: E402
@@ -231,7 +231,7 @@ class EdgeSnapperTest(unittest.TestCase):
     SIZE, GRAB = (300, 200), (150, 10)  # The note, and where the cursor holds it.
 
     def setUp(self):
-        self.edges = EdgeSnapper(distance=32, release=72, push=40, cross=112, sink=24, unpush=12)
+        self.edges = EdgeSnapper(distance=32, release=72, push=40, cross=112, unpush=12)
 
     def move(self, left, top, cursor=None):
         """Drags the note's top-left to (left, top); returns its place and the edges in play."""
@@ -249,21 +249,21 @@ class EdgeSnapperTest(unittest.TestCase):
     def test_sticks_to_the_taskbar_edge_and_to_a_corner(self):
         self.assertEqual(self.move(20, 830)[:2], ((0, 840), {"left", "bottom"}))
 
-    def test_push_into_an_edge_sinks_and_pull_back_ends_it(self):
+    def test_push_into_an_edge_and_pull_back_ends_it(self):
         self.move(1610, 500)
         self.assertEqual(self.move(1650, 500), ((1620, None), {"right"}, None))  # 30 px past.
-        self.assertEqual(self.move(1660, 500), ((1644, None), {"right"}, "right"))  # 40 px past.
+        self.assertEqual(self.move(1660, 500), ((1620, None), {"right"}, "right"))  # 40 px past.
         self.assertEqual(self.move(1650, 500)[2], "right")  # Pulled back less than 12 px.
         self.assertEqual(self.move(1640, 500), ((1620, None), {"right"}, None))
 
     def test_cursor_at_the_end_of_the_screen_pushes(self):
         self.move(500, 20)
         self.assertEqual(self.move(500, -5, cursor=(650, 5)), ((None, 0), {"top"}, None))
-        self.assertEqual(self.move(500, -10, cursor=(650, 0)), ((None, -24), {"top"}, "top"))
+        self.assertEqual(self.move(500, -10, cursor=(650, 0)), ((None, 0), {"top"}, "top"))
 
     def test_outer_edge_holds_however_far_pushed(self):
         self.move(-20, 500, cursor=(130, 510))
-        self.assertEqual(self.move(-150, 500, cursor=(0, 510)), ((-24, None), {"left"}, "left"))
+        self.assertEqual(self.move(-150, 500, cursor=(0, 510)), ((0, None), {"left"}, "left"))
 
     def test_shared_edge_crosses_and_does_not_catch_again(self):
         self.move(1610, 500)
@@ -294,21 +294,19 @@ class DockingTest(unittest.TestCase):
 
     def test_hidden_note_peeks_out(self):
         revealed = QRect(1620, 300, 300, 200)
-        self.assertEqual(hidden_pos(revealed, self.AREA, "right"), QPoint(1908, 300))
-        self.assertEqual(hidden_pos(QRect(0, 300, 300, 200), self.AREA, "left"), QPoint(-288, 300))
-        self.assertEqual(hidden_pos(QRect(500, 0, 300, 200), self.AREA, "top"), QPoint(500, -188))
+        self.assertEqual(hidden_depth(revealed, "right"), 288)
+        self.assertEqual(hidden_depth(revealed, "top"), 188)
+
+    def test_note_slides_into_its_edge(self):
+        self.assertEqual(shift_into("right", 288), QPoint(288, 0))
+        self.assertEqual(shift_into("left", 288), QPoint(-288, 0))
+        self.assertEqual(shift_into("top", 188), QPoint(0, -188))
 
     def test_reveal_zone_runs_along_the_note_at_the_edge(self):
         zone = reveal_zone(QRect(1620, 300, 300, 200), self.AREA, "right")
         self.assertTrue(zone.contains(QPoint(1919, 400)))
         self.assertFalse(zone.contains(QPoint(1919, 520)))  # Below the note.
         self.assertFalse(zone.contains(QPoint(1900, 400)))  # Too far from the edge.
-
-    def test_hidden_note_is_clipped_to_its_monitor(self):
-        work = (0, 0, 1920, 1040)
-        self.assertEqual(visible_part((1908, 300, 2208, 500), work), (0, 0, 12, 200))
-        self.assertEqual(visible_part((-288, 300, 12, 500), work), (288, 0, 300, 200))
-        self.assertIsNone(visible_part((1620, 300, 1920, 500), work))  # Slid out: all of it shows.
 
 
 class DockPersistenceTest(unittest.TestCase):

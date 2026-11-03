@@ -34,7 +34,6 @@ DWMSBT_TRANSIENTWINDOW = 3  # Acrylic.
 DWMWA_NCRENDERING_POLICY = 2
 DWMNCRP_DISABLED = 1
 
-WM_WINDOWPOSCHANGED = 0x0047
 WM_NCCALCSIZE = 0x0083
 WM_NCACTIVATE = 0x0086
 
@@ -113,12 +112,15 @@ if IS_WINDOWS:
     _GetMonitorInfo = _user32.GetMonitorInfoW
     _GetMonitorInfo.argtypes = [wintypes.HMONITOR, POINTER(MONITORINFO)]
     _GetMonitorInfo.restype = wintypes.BOOL
-    _CreateRectRgn = ctypes.WinDLL("gdi32").CreateRectRgn
-    _CreateRectRgn.argtypes = [c_int, c_int, c_int, c_int]
-    _CreateRectRgn.restype = wintypes.HRGN
-    _SetWindowRgn = _user32.SetWindowRgn
-    _SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
-    _SetWindowRgn.restype = c_int
+    _SetWindowDisplayAffinity = _user32.SetWindowDisplayAffinity
+    _SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
+    _SetWindowDisplayAffinity.restype = wintypes.BOOL
+    _GetWindowLong = _user32.GetWindowLongW
+    _GetWindowLong.argtypes = [wintypes.HWND, c_int]
+    _GetWindowLong.restype = ctypes.c_long
+    _SetWindowLong = _user32.SetWindowLongW
+    _SetWindowLong.argtypes = [wintypes.HWND, c_int, ctypes.c_long]
+    _SetWindowLong.restype = ctypes.c_long
 else:  # pragma: no cover
     _SetWCA = None
     _SetWindowPos = None
@@ -126,9 +128,13 @@ else:  # pragma: no cover
     _GetCursorPos = None
     _GetAsyncKeyState = None
     _EnumDisplayMonitors = None
-    _SetWindowRgn = None
+    _GetWindowLong = None
+    _SetWindowDisplayAffinity = None
 
 HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
+GWL_EXSTYLE = -20
+WS_EX_TRANSPARENT = 0x00000020
+WDA_NONE, WDA_EXCLUDEFROMCAPTURE = 0x00, 0x11
 SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE, SWP_SHOWWINDOW = 0x0001, 0x0002, 0x0004, 0x0010, 0x0040
 
 
@@ -230,22 +236,32 @@ def monitors() -> list[tuple[tuple[int, int, int, int], tuple[int, int, int, int
     return found
 
 
-def clip_window(hwnd: int, rect: tuple[int, int, int, int] | None) -> bool:
-    """Shows only rect of a window, or all of it again if rect is None.
-
-    The acrylic and the shadow are not clipped; use it on solid windows (see set_solid_backdrop).
-
-    Args:
-        hwnd: Native window handle.
-        rect: (left, top, right, bottom) in physical pixels, relative to the window's top-left.
-
-    Returns:
-        True if the clip was set.
-    """
-    if _SetWindowRgn is None:
+def place_below(hwnd: int, above: int) -> bool:
+    """Puts a window directly below another one, without focusing it."""
+    if _SetWindowPos is None:
         return False
-    region = _CreateRectRgn(*rect) if rect is not None else None
-    return bool(_SetWindowRgn(hwnd, region, True))  # The window owns the region from here on.
+    return bool(_SetWindowPos(hwnd, above, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE))
+
+
+def set_capture_excluded(hwnd: int, on: bool) -> bool:
+    """Leaves a window out of screen grabs (on), which then show what is behind it, or not."""
+    if _SetWindowDisplayAffinity is None:
+        return False
+    return bool(_SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE if on else WDA_NONE))
+
+
+def set_click_through(hwnd: int, on: bool) -> bool:
+    """Lets clicks pass through a window to what is below it (on), or not.
+
+    Takes effect while the window is translucent (layered).
+    """
+    if _GetWindowLong is None:
+        return False
+    style = _GetWindowLong(hwnd, GWL_EXSTYLE)
+    wanted = style | WS_EX_TRANSPARENT if on else style & ~WS_EX_TRANSPARENT
+    if wanted != style:
+        _SetWindowLong(hwnd, GWL_EXSTYLE, wanted)
+    return True
 
 
 def window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
@@ -304,13 +320,14 @@ def set_system_acrylic(hwnd: int, dark: bool) -> bool:
     return _DwmSetWindowAttribute(handle, DWMWA_SYSTEMBACKDROP_TYPE, byref(backdrop), sizeof(backdrop)) == 0
 
 
-def set_solid_backdrop(hwnd: int) -> bool:
-    """Turns off the system acrylic, DWM's rounded corners and the shadow.
+def set_solid_backdrop(hwnd: int, rounded: bool = False) -> bool:
+    """Turns off the system acrylic, and DWM's rounded corners and the shadow unless rounded.
 
-    The window's own alpha still shows, so it paints its rounded corners itself.
+    Parts the window leaves unpainted show what is behind it.
 
     Args:
         hwnd: Native window handle.
+        rounded: Keeps DWM's rounded corners and the shadow.
 
     Returns:
         True if the backdrop was turned off; False on older Windows builds or on failure.
@@ -318,7 +335,11 @@ def set_solid_backdrop(hwnd: int) -> bool:
     if not HAS_SYSTEM_BACKDROP:
         return False
     handle = wintypes.HWND(hwnd)
-    backdrop, corner = c_int(DWMSBT_NONE), c_int(DWMWCP_DONOTROUND)
+    if _DwmExtendFrameIntoClientArea(handle, byref(MARGINS(-1, -1, -1, -1))) != 0:
+        return False
+    policy = c_int(DWMNCRP_DISABLED)
+    _DwmSetWindowAttribute(handle, DWMWA_NCRENDERING_POLICY, byref(policy), sizeof(policy))
+    backdrop, corner = c_int(DWMSBT_NONE), c_int(DWMWCP_ROUND if rounded else DWMWCP_DONOTROUND)
     _DwmSetWindowAttribute(handle, DWMWA_WINDOW_CORNER_PREFERENCE, byref(corner), sizeof(corner))
     return _DwmSetWindowAttribute(handle, DWMWA_SYSTEMBACKDROP_TYPE, byref(backdrop), sizeof(backdrop)) == 0
 
