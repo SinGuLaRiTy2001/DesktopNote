@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0rc4] - 2026-11-03
+
 ### Changed
 
 - Notes stick to the edges of every monitor, so a note can sit flush against an edge. To tuck a
@@ -93,7 +95,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Reminder notifications, keep-on-top, and a tray menu listing every note.
 - Settings for theme, language (English and Simplified Chinese), text size and start at login.
 
-[Unreleased]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc3...HEAD
+[Unreleased]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc4...HEAD
+[1.0.0rc4]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc3...v1.0.0rc4
 [1.0.0rc3]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc2...v1.0.0rc3
 [1.0.0rc2]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc1...v1.0.0rc2
 [1.0.0rc1]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v0.3.0...v1.0.0rc1
