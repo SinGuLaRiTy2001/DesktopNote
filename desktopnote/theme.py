@@ -89,6 +89,7 @@ class Theme:
         system_tint: "#AARRGGBB" approximating the Windows 11 acrylic tint, used by the fade-in
             stand-in.
         fill_alpha: Alpha of the note's own fill over the system acrylic (higher is more opaque).
+        solid_fill: Opaque glass colour of a note hidden at an edge.
         glow_ref: Typical glass colour the tag glow is judged against.
         glow_delta_e: Perceived difference (CIE76 delta E) from glow_ref the tag glow aims for at
             the top edge, so any tag colour reads equally strong.
@@ -115,6 +116,7 @@ class Theme:
     glass_alpha: int
     system_tint: str
     fill_alpha: int
+    solid_fill: str
     # Tag glow: any colour is fitted so it reads equally strong while the pill and the title keep
     # their contrast (see glow_color).
     glow_ref: str
@@ -164,6 +166,7 @@ LIGHT = Theme(
     system_tint="#78F3F3F3",
     # Opaque enough to stay readable on any desktop (measured), yet still visibly glass.
     fill_alpha=0xB8,  # About #D8 over a black desktop.
+    solid_fill="#E4E4E6",
     glow_ref="#E6E6E8",
     glow_delta_e=20.0,  # The strength of the earlier hand-tuned glows.
     menu_bg="rgba(246,246,248,0.97)",
@@ -190,6 +193,7 @@ DARK = Theme(
     glass_alpha=0xB0,
     system_tint="#663A3A3A",
     fill_alpha=0xC0,  # About #39 over a white desktop.
+    solid_fill="#2D2D2F",
     glow_ref="#2C2C2E",
     glow_delta_e=36.0,
     menu_bg="rgba(44,44,46,0.97)",

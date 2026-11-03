@@ -14,10 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6.QtCore import QPoint, QRect  # noqa: E402
 
 from desktopnote import i18n  # noqa: E402
-from desktopnote.docking import closed_edges, dock_edge, hidden_pos, reveal_zone, revealed_rect  # noqa: E402
+from desktopnote.docking import hidden_pos, reveal_zone, revealed_rect, visible_part  # noqa: E402
 from desktopnote.instance import claim  # noqa: E402
 from desktopnote.models import Item, Note  # noqa: E402
-from desktopnote.snapping import Snapper  # noqa: E402
+from desktopnote.snapping import EdgeSnapper, Snapper  # noqa: E402
 from desktopnote.storage import Store  # noqa: E402
 from desktopnote.widgets import format_due, half_hour_step, humanize_delta, reminder_state  # noqa: E402
 
@@ -222,25 +222,71 @@ class SnapperTest(unittest.TestCase):
         self.assertIsNone(self.move(310, 135))  # Pulled down.
 
 
+class EdgeSnapperTest(unittest.TestCase):
+    """A dragged note sticks to monitor edges, hides when pushed in and crosses to the next monitor."""
+
+    # Two monitors side by side, the left one with a taskbar 40 px high.
+    LEFT, RIGHT = (0, 0, 1920, 1080), (1920, 0, 3840, 1080)
+    MONITORS = [(LEFT, (0, 0, 1920, 1040)), (RIGHT, RIGHT)]
+    SIZE, GRAB = (300, 200), (150, 10)  # The note, and where the cursor holds it.
+
+    def setUp(self):
+        self.edges = EdgeSnapper(distance=32, release=72, push=40, cross=112, sink=24, unpush=12)
+
+    def move(self, left, top, cursor=None):
+        """Drags the note's top-left to (left, top); returns its place and the edges in play."""
+        width, height = self.SIZE
+        if cursor is None:
+            cursor = (min(left + self.GRAB[0], 3839), max(top + self.GRAB[1], 0))
+        place = self.edges.update((left, top, left + width, top + height), self.MONITORS, cursor)
+        return place, {stick.edge for stick in self.edges.stuck.values()}, self.edges.pushed
+
+    def test_sticks_flush_when_close(self):
+        self.assertEqual(self.move(1600, 500), ((1620, None), {"right"}, None))  # 20 px short.
+        self.assertEqual(self.move(1580, 500), ((1620, None), {"right"}, None))  # Held.
+        self.assertEqual(self.move(1540, 500), ((None, None), set(), None))  # Pulled 80 px back.
+
+    def test_sticks_to_the_taskbar_edge_and_to_a_corner(self):
+        self.assertEqual(self.move(20, 830)[:2], ((0, 840), {"left", "bottom"}))
+
+    def test_push_into_an_edge_sinks_and_pull_back_ends_it(self):
+        self.move(1610, 500)
+        self.assertEqual(self.move(1650, 500), ((1620, None), {"right"}, None))  # 30 px past.
+        self.assertEqual(self.move(1660, 500), ((1644, None), {"right"}, "right"))  # 40 px past.
+        self.assertEqual(self.move(1650, 500)[2], "right")  # Pulled back less than 12 px.
+        self.assertEqual(self.move(1640, 500), ((1620, None), {"right"}, None))
+
+    def test_cursor_at_the_end_of_the_screen_pushes(self):
+        self.move(500, 20)
+        self.assertEqual(self.move(500, -5, cursor=(650, 5)), ((None, 0), {"top"}, None))
+        self.assertEqual(self.move(500, -10, cursor=(650, 0)), ((None, -24), {"top"}, "top"))
+
+    def test_outer_edge_holds_however_far_pushed(self):
+        self.move(-20, 500, cursor=(130, 510))
+        self.assertEqual(self.move(-150, 500, cursor=(0, 510)), ((-24, None), {"left"}, "left"))
+
+    def test_shared_edge_crosses_and_does_not_catch_again(self):
+        self.move(1610, 500)
+        self.assertEqual(self.move(1731, 500)[1:], ({"right"}, "right"))  # 111 px past.
+        self.assertEqual(self.move(1732, 500), ((None, None), set(), None))  # 112 px past: crossed.
+        self.assertEqual(self.move(1900, 500), ((None, None), set(), None))  # The next left edge lets it by.
+        self.move(1960, 500)  # Clear of the edge.
+        self.assertEqual(self.move(1930, 500)[:2], ((1920, None), {"left"}))  # Now it catches.
+
+    def test_fast_move_past_an_edge_sticks(self):
+        self.move(1500, 500)
+        self.assertEqual(self.move(1660, 500)[1:], ({"right"}, "right"))  # 40 px past in one move.
+
+    def test_bottom_edge_lets_go_when_pushed(self):
+        self.move(500, 830)
+        self.assertEqual(self.move(500, 900)[1], {"bottom"})
+        self.assertEqual(self.move(500, 920)[1], set())  # 80 px past the taskbar edge.
+
+
 class DockingTest(unittest.TestCase):
-    """A note dragged against a screen edge hides there, peeking out."""
+    """A note pushed into a screen edge hides there, peeking out."""
 
     AREA = QRect(0, 0, 1920, 1040)  # A screen's available area.
-
-    def test_edge_touched_or_crossed(self):
-        self.assertEqual(dock_edge(QRect(1700, 300, 300, 200), self.AREA), "right")
-        self.assertEqual(dock_edge(QRect(1620, 300, 300, 200), self.AREA), "right")  # Flush.
-        self.assertEqual(dock_edge(QRect(-50, 300, 300, 200), self.AREA), "left")
-        self.assertEqual(dock_edge(QRect(500, -20, 300, 200), self.AREA), "top")
-        self.assertEqual(dock_edge(QRect(500, 900, 300, 200), self.AREA), "")  # Bottom: no.
-        self.assertEqual(dock_edge(QRect(500, 300, 300, 200), self.AREA), "")
-
-    def test_corner_picks_the_edge_crossed_further(self):
-        self.assertEqual(dock_edge(QRect(1700, -10, 300, 200), self.AREA), "right")
-        self.assertEqual(dock_edge(QRect(1625, -40, 300, 200), self.AREA), "top")
-
-    def test_closed_edge_does_not_dock(self):
-        self.assertEqual(dock_edge(QRect(1700, 300, 300, 200), self.AREA, {"right"}), "")
 
     def test_revealed_rect_is_flush_and_on_screen(self):
         self.assertEqual(revealed_rect(QRect(1700, -30, 300, 200), self.AREA, "right"), QRect(1620, 0, 300, 200))
@@ -258,12 +304,11 @@ class DockingTest(unittest.TestCase):
         self.assertFalse(zone.contains(QPoint(1919, 520)))  # Below the note.
         self.assertFalse(zone.contains(QPoint(1900, 400)))  # Too far from the edge.
 
-    def test_edge_shared_with_another_monitor_is_closed(self):
-        main, right = QRect(0, 0, 1920, 1080), QRect(1920, 0, 1920, 1080)
-        self.assertEqual(closed_edges(main, [right], QRect(1700, 300, 300, 200)), {"right"})
-        self.assertEqual(closed_edges(right, [main], QRect(1900, 300, 300, 200)), {"left"})
-        above = QRect(0, -1080, 1920, 1080)
-        self.assertEqual(closed_edges(main, [above], QRect(500, -10, 300, 200)), {"top"})
+    def test_hidden_note_is_clipped_to_its_monitor(self):
+        work = (0, 0, 1920, 1040)
+        self.assertEqual(visible_part((1908, 300, 2208, 500), work), (0, 0, 12, 200))
+        self.assertEqual(visible_part((-288, 300, 12, 500), work), (288, 0, 300, 200))
+        self.assertIsNone(visible_part((1620, 300, 1920, 500), work))  # Slid out: all of it shows.
 
 
 class DockPersistenceTest(unittest.TestCase):

@@ -23,15 +23,18 @@ ACCENT_ENABLE_ACRYLICBLURBEHIND = 4
 WCA_ACCENT_POLICY = 19
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWA_BORDER_COLOR = 34
+DWMWCP_DONOTROUND = 1
 DWMWCP_ROUND = 2
 DWMWCP_ROUNDSMALL = 3
 DWMWA_COLOR_NONE = 0xFFFFFFFE
 DWMWA_USE_IMMERSIVE_DARK_MODE = 20
 DWMWA_SYSTEMBACKDROP_TYPE = 38
+DWMSBT_NONE = 1
 DWMSBT_TRANSIENTWINDOW = 3  # Acrylic.
 DWMWA_NCRENDERING_POLICY = 2
 DWMNCRP_DISABLED = 1
 
+WM_WINDOWPOSCHANGED = 0x0047
 WM_NCCALCSIZE = 0x0083
 WM_NCACTIVATE = 0x0086
 
@@ -55,6 +58,13 @@ class MARGINS(Structure):
     """The Win32 MARGINS structure used by DwmExtendFrameIntoClientArea."""
 
     _fields_ = [("cxLeftWidth", c_int), ("cxRightWidth", c_int), ("cyTopHeight", c_int), ("cyBottomHeight", c_int)]
+
+
+class MONITORINFO(Structure):
+    """The Win32 MONITORINFO structure filled in by GetMonitorInfoW."""
+
+    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
+                ("dwFlags", wintypes.DWORD)]
 
 
 class WINDOWCOMPOSITIONATTRIBDATA(Structure):
@@ -95,12 +105,28 @@ if IS_WINDOWS:
     _GetAsyncKeyState = _user32.GetAsyncKeyState
     _GetAsyncKeyState.argtypes = [c_int]
     _GetAsyncKeyState.restype = ctypes.c_short
+    _MonitorEnumProc = ctypes.WINFUNCTYPE(
+        wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC, POINTER(wintypes.RECT), wintypes.LPARAM)
+    _EnumDisplayMonitors = _user32.EnumDisplayMonitors
+    _EnumDisplayMonitors.argtypes = [wintypes.HDC, POINTER(wintypes.RECT), _MonitorEnumProc, wintypes.LPARAM]
+    _EnumDisplayMonitors.restype = wintypes.BOOL
+    _GetMonitorInfo = _user32.GetMonitorInfoW
+    _GetMonitorInfo.argtypes = [wintypes.HMONITOR, POINTER(MONITORINFO)]
+    _GetMonitorInfo.restype = wintypes.BOOL
+    _CreateRectRgn = ctypes.WinDLL("gdi32").CreateRectRgn
+    _CreateRectRgn.argtypes = [c_int, c_int, c_int, c_int]
+    _CreateRectRgn.restype = wintypes.HRGN
+    _SetWindowRgn = _user32.SetWindowRgn
+    _SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
+    _SetWindowRgn.restype = c_int
 else:  # pragma: no cover
     _SetWCA = None
     _SetWindowPos = None
     _GetWindowRect = None
     _GetCursorPos = None
     _GetAsyncKeyState = None
+    _EnumDisplayMonitors = None
+    _SetWindowRgn = None
 
 HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
 SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE, SWP_SHOWWINDOW = 0x0001, 0x0002, 0x0004, 0x0010, 0x0040
@@ -182,6 +208,46 @@ def move_window(hwnd: int, x: int, y: int) -> bool:
     return bool(_SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE))
 
 
+def monitors() -> list[tuple[tuple[int, int, int, int], tuple[int, int, int, int]]]:
+    """Returns each monitor's rect and work area as (left, top, right, bottom) in physical pixels.
+
+    The work area leaves out the taskbar and docked toolbars. Returns an empty list on failure.
+    """
+    found = []
+    if _EnumDisplayMonitors is None:
+        return found
+
+    def add(monitor, _dc, _rect, _data):
+        info = MONITORINFO()
+        info.cbSize = sizeof(MONITORINFO)
+        if _GetMonitorInfo(monitor, byref(info)):
+            full, work = info.rcMonitor, info.rcWork
+            found.append(((full.left, full.top, full.right, full.bottom),
+                          (work.left, work.top, work.right, work.bottom)))
+        return True
+
+    _EnumDisplayMonitors(None, None, _MonitorEnumProc(add), 0)
+    return found
+
+
+def clip_window(hwnd: int, rect: tuple[int, int, int, int] | None) -> bool:
+    """Shows only rect of a window, or all of it again if rect is None.
+
+    The acrylic and the shadow are not clipped; use it on solid windows (see set_solid_backdrop).
+
+    Args:
+        hwnd: Native window handle.
+        rect: (left, top, right, bottom) in physical pixels, relative to the window's top-left.
+
+    Returns:
+        True if the clip was set.
+    """
+    if _SetWindowRgn is None:
+        return False
+    region = _CreateRectRgn(*rect) if rect is not None else None
+    return bool(_SetWindowRgn(hwnd, region, True))  # The window owns the region from here on.
+
+
 def window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
     """Returns a window's (left, top, right, bottom) in physical screen pixels, or None on failure."""
     rect = wintypes.RECT()
@@ -235,6 +301,25 @@ def set_system_acrylic(hwnd: int, dark: bool) -> bool:
     policy = c_int(DWMNCRP_DISABLED)
     _DwmSetWindowAttribute(handle, DWMWA_NCRENDERING_POLICY, byref(policy), sizeof(policy))
     backdrop = c_int(DWMSBT_TRANSIENTWINDOW)
+    return _DwmSetWindowAttribute(handle, DWMWA_SYSTEMBACKDROP_TYPE, byref(backdrop), sizeof(backdrop)) == 0
+
+
+def set_solid_backdrop(hwnd: int) -> bool:
+    """Turns off the system acrylic, DWM's rounded corners and the shadow.
+
+    The window's own alpha still shows, so it paints its rounded corners itself.
+
+    Args:
+        hwnd: Native window handle.
+
+    Returns:
+        True if the backdrop was turned off; False on older Windows builds or on failure.
+    """
+    if not HAS_SYSTEM_BACKDROP:
+        return False
+    handle = wintypes.HWND(hwnd)
+    backdrop, corner = c_int(DWMSBT_NONE), c_int(DWMWCP_DONOTROUND)
+    _DwmSetWindowAttribute(handle, DWMWA_WINDOW_CORNER_PREFERENCE, byref(corner), sizeof(corner))
     return _DwmSetWindowAttribute(handle, DWMWA_SYSTEMBACKDROP_TYPE, byref(backdrop), sizeof(backdrop)) == 0
 
 

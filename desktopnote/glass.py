@@ -27,12 +27,14 @@ class GlassWindow(QWidget):
 
     Attributes:
         theme: The theme used for the glass.
+        solid: Whether the window shows an opaque fill instead of the frosted glass.
     """
 
     def __init__(self, theme: Theme):
         super().__init__(None)
         self.theme = theme
         self._glass = False  # Acrylic (or blur) is active.
+        self.solid = False
         self._moving = False  # Being moved or resized (legacy backdrop only).
         self._intro: motion.BackdropFade | None = None  # Stand-in acrylic while fading in.
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -45,11 +47,28 @@ class GlassWindow(QWidget):
             return Qt.Tool | Qt.CustomizeWindowHint
         return Qt.FramelessWindowHint | Qt.Tool | Qt.NoDropShadowWindowHint
 
+    def set_solid(self, solid: bool) -> None:
+        """Swaps the frosted glass for an opaque fill without a shadow, or back.
+
+        A solid window can be clipped (see win_effects.clip_window).
+        """
+        if solid != self.solid:
+            self.solid = solid
+            self._apply_glass()
+
     def _apply_glass(self) -> None:
         """Applies the system acrylic (or an acrylic/blur fallback) and rounded corners."""
         if not self.isVisible():
             return
         hwnd = int(self.winId())
+        if self.solid:
+            self._glass = False
+            if NATIVE_BACKDROP:
+                win_effects.set_solid_backdrop(hwnd)
+            else:
+                win_effects.set_accent(hwnd, win_effects.ACCENT_DISABLED)
+            self.update()
+            return
         rgba = self.theme.acrylic_rgba()
         if NATIVE_BACKDROP:
             self._glass = win_effects.set_system_acrylic(hwnd, self.theme.dark)
@@ -101,7 +120,7 @@ class GlassWindow(QWidget):
         Returns:
             The outline, for painting more layers and the border on top.
         """
-        if self._glass:
+        if self._glass or self.solid:
             # An alpha-1 base keeps the rounded-off corners hit-testable (notes resize from them),
             # since fully transparent layered-window pixels are click-through.
             p.fillRect(self.rect(), QColor(0, 0, 0, 1))
@@ -109,7 +128,9 @@ class GlassWindow(QWidget):
         if self._intro is not None:
             self._intro.paint(p, path)
         fill = self.theme.glass_color()
-        if not self._glass:
+        if self.solid:
+            fill = QColor(self.theme.solid_fill)
+        elif not self._glass:
             fill.setAlpha(242)
         elif NATIVE_BACKDROP:
             fill.setAlpha(self.theme.fill_alpha)  # Tint over the system acrylic.

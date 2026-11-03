@@ -155,13 +155,21 @@ class WindowGlide(QObject):
         """Returns whether a glide is in progress."""
         return self._timer.isActive()
 
-    def position(self) -> tuple[int, int]:
-        """Returns the current position: the target plus what is left of the offset."""
+    def position(self, ahead_ms: float = 0) -> tuple[int, int]:
+        """Returns the current position: the target plus what is left of the offset.
+
+        Args:
+            ahead_ms: Returns the position this many milliseconds from now instead.
+        """
         left = 0.0
         if self._timer.isActive():
-            progress = self._clock.elapsed() / self.duration
+            progress = (self._clock.elapsed() + ahead_ms) / self.duration
             left = 0.0 if progress >= 1 else 1.0 - self._curve.valueForProgress(progress)
         return round(self.target[0] + self._offset[0] * left), round(self.target[1] + self._offset[1] * left)
+
+    def frame_ms(self) -> int:
+        """Returns the time between two frames of the glide in milliseconds."""
+        return self._timer.interval()
 
     def _tick(self) -> None:
         done = self._clock.elapsed() >= self.duration

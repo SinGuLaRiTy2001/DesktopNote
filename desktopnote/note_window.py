@@ -411,7 +411,7 @@ class NoteWindow(GlassWindow):
         self.soon_minutes = soon_minutes
         self.editing = False
         self.rows: list[ItemRow] = []
-        self._snap_move = SnapMove(self)  # Snap to align while dragged.
+        self._snap_move = SnapMove(self, self._on_drag_move)  # Snap to align while dragged.
         self.dock = EdgeDock(self)
         self._moved = False  # Whether the current move or resize moved the window.
         self._snap_target: NoteWindow | None = None  # The note this one is snapped to.
@@ -1152,6 +1152,10 @@ class NoteWindow(GlassWindow):
         index = self._snap_move.snapped_to()
         self._show_snap_target(notes[index][0] if index is not None else None)
 
+    def _on_drag_move(self, rect: tuple[int, int, int, int], ahead: tuple[int, int, int, int] | None) -> None:
+        """Lets the dock show whether letting go hides the note (see EdgeDock.follow_drag)."""
+        self.dock.follow_drag(rect, self._snap_move.pushed(), self._snap_move.stuck(), ahead)
+
     def _show_snap_target(self, target: "NoteWindow | None") -> None:
         """Keeps the note snapped to slid out while it is the target."""
         if target is self._snap_target:
@@ -1174,6 +1178,8 @@ class NoteWindow(GlassWindow):
                 self._moved = False
                 self._snap_move.begin()
                 self.dock.drag_started()
+            if msg.message == win_effects.WM_WINDOWPOSCHANGED:
+                self.dock.window_moved()
             if msg.message == win_effects.WM_MOVING:
                 self._moved = True
                 self._snap(wintypes.RECT.from_address(msg.lParam))
@@ -1182,7 +1188,7 @@ class NoteWindow(GlassWindow):
                 exit_move = True
                 self._snap_move.stop()
                 self._show_snap_target(None)
-                self.dock.drag_finished(self._moved)
+                self.dock.drag_finished(self._moved, self._snap_move.stuck(), self._snap_move.pushed())
         result = super().nativeEvent(event_type, message)
         if exit_move:
             self._sync_geometry()

@@ -25,9 +25,10 @@ stay exactly where you left them.
 - **Colour tags**: tint a note with one of the preset colours or any custom colour, so notes
   are easy to tell apart.
 - **Titles and keep-on-top**: give a note an optional title, or keep it above other windows.
-- **Snap to align**: drag a note close to another and it snaps next to it, edges aligned.
-- **Dock to edge**: drag a note against the left, right or top edge of the screen to tuck it
-  away; it slides out when the cursor comes to it.
+- **Snap to align**: drag a note close to another and it snaps next to it, edges aligned; near
+  the edge of a monitor, it sticks to that edge.
+- **Dock to edge**: push a note into the left, right or top edge of any monitor to tuck it away;
+  it slides out when the cursor comes to it.
 - **Tray menu**: create notes, bring them all to the front, jump to one note by name, and change
   settings.
 - **Scripts and AI agents**: a command line shows notes as JSON, makes notes and adds, changes or
@@ -74,6 +75,7 @@ To build the release zip, see [docs/RELEASING.md](docs/RELEASING.md).
 |---|---|
 | New note | Tray menu → **New Note**, or **⋯** → **New Note** on any note |
 | Move | Drag the bar at the top of the note |
+| Tuck away at an edge | Drag the note against an edge and push on until it sinks in, then let go |
 | Resize | Drag an edge or a corner |
 | Edit | Double-click the note, or tap the pencil at the bottom right |
 | Finish editing | Tap **Done**, or press `Esc` |

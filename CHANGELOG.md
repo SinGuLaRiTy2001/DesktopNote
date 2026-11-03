@@ -5,6 +5,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Notes stick to the edges of every monitor, so a note can sit flush against an edge. To tuck a
+  note away, push it on into the edge until it sinks in and let go. This works on an edge between
+  two monitors too; push further there to move the note across.
+
 ## [1.0.0rc3] - 2026-11-02
 
 ### Added
