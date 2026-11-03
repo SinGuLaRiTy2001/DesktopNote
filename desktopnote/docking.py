@@ -381,6 +381,7 @@ class EdgeDock(QObject):
         self._work = monitor[1] if monitor else None
         self._shared = monitor is not None and continues(monitor[0], edge, physical, monitors)
         win_effects.set_topmost(self._hwnd(), True)
+        self._window.update_pin_mark()
         self._poll.start()
         return revealed
 
@@ -409,6 +410,7 @@ class EdgeDock(QObject):
             win_effects.set_click_through(self._hwnd(), False)
             self._fade_to(1.0, self._show_glass)
             win_effects.set_topmost(self._hwnd(), self._window.note.pinned)
+            self._window.update_pin_mark()
             self._window.changed.emit()
 
     def validate(self) -> bool:

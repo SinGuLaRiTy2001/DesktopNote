@@ -84,7 +84,7 @@ To build the release zip, see [docs/RELEASING.md](docs/RELEASING.md).
 | Edit | Double-click the note, or tap the pencil at the bottom right |
 | Finish editing | Tap **Done**, or press `Esc` |
 | Colour tag | **⋯** → pick a colour, or the last swatch for a palette and hex input |
-| Keep on top | **⋯** → **Keep on Top** |
+| Keep on top | **⋯** → **Keep on Top** (always on while a note is tucked away) |
 | Delete | **⋯** → **Delete Note**, then confirm |
 
 ### Items

@@ -12,6 +12,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
   edge between two monitors too; push further there to move the note across.
 - Switching an empty note to editing is one movement: the title opens while the hint glides
   down and fades into its editing text.
+- A tucked-away note always stays above other windows and shows the pin mark; Keep on Top is
+  unavailable for it.
+
+### Fixed
+
+- Choosing Keep on Top or Don't Keep on Top no longer makes the note flash.
 
 ## [1.0.0rc3] - 2026-11-02
 

@@ -192,10 +192,18 @@ def icon(name: str, color: str, size: int = 18) -> QIcon:
     return qicon
 
 
-def menu_icon(name: str, color: str) -> QIcon:
-    """Returns an icon for a menu row, sitting on the row text's midline."""
+def menu_icon(name: str, color: str, disabled_color: str | None = None) -> QIcon:
+    """Returns an icon for a menu row, sitting on the row text's midline.
+
+    Args:
+        name: Key of the icon in _PATHS.
+        color: Colour of the icon.
+        disabled_color: Colour of the icon while its row is disabled; None for Qt's default.
+    """
     qicon = QIcon()
     qicon.addPixmap(pixmap(name, color, MENU_ICON, dy=MENU_ICON_DY))
+    if disabled_color is not None:
+        qicon.addPixmap(pixmap(name, disabled_color, MENU_ICON, dy=MENU_ICON_DY), QIcon.Disabled)
     return qicon
 
 

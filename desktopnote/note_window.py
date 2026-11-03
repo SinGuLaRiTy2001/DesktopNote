@@ -432,7 +432,7 @@ class NoteWindow(GlassWindow):
         self.setWindowTitle("DesktopNote")
         self.setMouseTracking(True)
         self.setMinimumSize(MIN_SIZE)
-        self._apply_flags()
+        self.setWindowFlags(self._window_flags())
 
         self.body = QWidget(self)  # Holds everything; slides within the window (see set_content_shift).
         self.body.setMouseTracking(True)
@@ -448,6 +448,12 @@ class NoteWindow(GlassWindow):
         policy = self.pin_mark.sizePolicy()
         policy.setRetainSizeWhenHidden(True)  # Unpinned notes must not shift the grabber.
         self.pin_mark.setSizePolicy(policy)
+        self._pin_fx = motion.ShiftFade(self.pin_mark)
+        self.pin_mark.setGraphicsEffect(self._pin_fx)
+        self._pin_shown = note.pinned
+        self._pin_tween: motion.Tween | None = None
+        self._pin_fx.set(1.0 if note.pinned else 0.0)
+        self.pin_mark.setVisible(note.pinned)
         self.grabber = Grabber(theme, self)
         # The pin takes 18 px on the right and this spacing 16 px on the left: with root margins of
         # 7 px left and 5 px right, this centres the grabber on the window, not the content area.
@@ -632,19 +638,18 @@ class NoteWindow(GlassWindow):
         self.btn_reminder.setIcon(icons.icon("bell", icon_color))
         self.btn_edit.setIcon(icons.icon("pencil", icon_color))
         self.btn_more.setIcon(icons.icon("ellipsis", icon_color))
-        self.pin_mark.setVisible(self.note.pinned)
         self._update_placeholder()  # The inline icon is tinted with the theme.
         for row in self.rows:
             row.apply_theme(theme)
         self._apply_glass()
         self.update()
 
-    def _apply_flags(self) -> None:
-        """Sets the window flags for the backdrop in use and the note's pinned state."""
+    def _window_flags(self) -> Qt.WindowFlags:
+        """Returns the window flags for the backdrop in use and the note's pinned state."""
         flags = self.glass_flags()
         if self.note.pinned:
             flags |= Qt.WindowStaysOnTopHint
-        self.setWindowFlags(flags)
+        return flags
 
     # --- Items ---------------------------------------------------------------
     def _add_row(self, item: Item, index: int | None = None) -> ItemRow:
@@ -898,8 +903,9 @@ class NoteWindow(GlassWindow):
         menu.addAction(row)
         menu.addSeparator()
         menu.addAction(icons.menu_icon("note", theme.text), tr("menu.new"), lambda: self.newNoteRequested.emit(self))
-        menu.addAction(icons.menu_icon("pin", theme.text), tr("menu.unpin" if self.note.pinned else "menu.pin"),
-                       self.toggle_pin)
+        pin = menu.addAction(icons.menu_icon("pin", theme.text, theme.tertiary),
+                             tr("menu.unpin" if self.note.pinned else "menu.pin"), self.toggle_pin)
+        pin.setEnabled(not self.dock.edge)
         menu.addSeparator()
         delete = menu.addAction(icons.menu_icon("trash", theme.red), tr("menu.delete"), self.request_delete)
         delete.setData("danger")
@@ -1013,13 +1019,34 @@ class NoteWindow(GlassWindow):
     def toggle_pin(self) -> None:
         """Toggles whether the note stays on top of other windows."""
         self.note.pinned = not self.note.pinned
-        geo = self.geometry()
-        self._apply_flags()  # Changing the flags hides the window.
-        self.setGeometry(geo)
-        self.show()
-        self.dock.keep_on_top()
-        self.pin_mark.setVisible(self.note.pinned)
+        self.overrideWindowFlags(self._window_flags())
+        win_effects.set_topmost(int(self.winId()), self.note.pinned)
+        self.update_pin_mark()
         self._touch()
+
+    def update_pin_mark(self) -> None:
+        """Fades the pin mark in or out: it shows while the note stays on top."""
+        shown = self.note.pinned or bool(self.dock.edge)
+        if shown == self._pin_shown:
+            return
+        self._pin_shown = shown
+        if self._pin_tween is not None:
+            self._pin_tween.stop()
+        if not self.isVisible():
+            self._pin_fx.set(1.0 if shown else 0.0)
+            self.pin_mark.setVisible(shown)
+            return
+        start = self._pin_fx.opacity()
+        self.pin_mark.setVisible(True)
+
+        def step(v: float) -> None:
+            self._pin_fx.set(start + ((1.0 if shown else 0.0) - start) * v)
+
+        def done() -> None:
+            self.pin_mark.setVisible(shown)
+
+        self._pin_tween = motion.Tween(self, motion.POP_IN_MS, step, done)
+        self._pin_tween.start()
 
     def request_delete(self) -> None:
         """Deletes an empty note at once; otherwise asks for confirmation in the bottom bar."""
