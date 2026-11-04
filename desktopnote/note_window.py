@@ -897,7 +897,7 @@ class NoteWindow(GlassWindow):
         row.setDefaultWidget(tags)
         menu.addAction(row)
         menu.addSeparator()
-        menu.addAction(icons.menu_icon("note", theme.text), tr("menu.new"), lambda: self.newNoteRequested.emit(self))
+        menu.addAction(icons.menu_icon("plus", theme.text), tr("menu.new"), lambda: self.newNoteRequested.emit(self))
         pin = menu.addAction(icons.menu_icon("pin", theme.text, theme.tertiary),
                              tr("menu.unpin" if self.note.pinned else "menu.pin"), self.toggle_pin)
         pin.setEnabled(not self.dock.edge)
