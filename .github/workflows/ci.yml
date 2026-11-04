@@ -7,6 +7,22 @@ on:
     branches: [dev, main]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Install ruff
+        run: python -m pip install ruff==0.17.3
+
+      - name: Check the code with ruff (settings in pyproject.toml)
+        run: ruff check .
+
   test:
     # The app uses Win32 / DWM APIs, so tests run on Windows.
     runs-on: windows-latest

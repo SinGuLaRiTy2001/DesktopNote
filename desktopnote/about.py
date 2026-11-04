@@ -4,7 +4,15 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, QSize, Qt, QUrl
 from PySide6.QtGui import QColor, QCursor, QDesktopServices, QFont, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (
-    QAbstractButton, QHBoxLayout, QLabel, QLayout, QSizePolicy, QSpacerItem, QToolButton, QVBoxLayout, QWidget,
+    QAbstractButton,
+    QHBoxLayout,
+    QLabel,
+    QLayout,
+    QSizePolicy,
+    QSpacerItem,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
 
 from . import __version__, icons, motion, win_effects

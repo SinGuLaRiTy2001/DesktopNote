@@ -16,7 +16,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _harness as H  # noqa: E402
-
 from PySide6.QtCore import QPointF, QRect, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QRadialGradient  # noqa: E402
 from PySide6.QtWidgets import QWidget  # noqa: E402

@@ -18,7 +18,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _harness as H  # noqa: E402  (Sets DESKTOPNOTE_HOME first.)
-
 from PySide6.QtCore import QPoint, QRect  # noqa: E402
 from PySide6.QtWidgets import QMenu, QWidgetAction  # noqa: E402
 

@@ -20,6 +20,7 @@ classifiers = [
 
 [project.optional-dependencies]
 build = ["pyinstaller>=6"]
+dev = ["ruff>=0.17"]
 
 [project.gui-scripts]
 desktopnote = "desktopnote.app:main"
@@ -29,3 +30,13 @@ desktopnote-cli = "desktopnote.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["desktopnote*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["desktopnote"]

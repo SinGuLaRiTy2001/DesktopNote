@@ -113,7 +113,8 @@ _PATHS: dict[str, str] = {
         '<defs><linearGradient id="g" x1="0.318" y1="0" x2="0.682" y2="1">'
         '<stop offset="0" stop-color="#FFB3DA"/><stop offset="1" stop-color="#9C8CFF"/></linearGradient></defs>'
         '<rect x="2" y="2" width="20" height="20" rx="5.5" fill="url(#g)"/>'
-        '<path fill="none" stroke="#4A2C96" stroke-opacity="0.9" stroke-width="1.6" stroke-linecap="round" d="M7 9h10M7 12.5h10M7 16h6"/>'
+        '<path fill="none" stroke="#4A2C96" stroke-opacity="0.9" stroke-width="1.6" stroke-linecap="round" '
+        'd="M7 9h10M7 12.5h10M7 16h6"/>'
     ),
 }
 

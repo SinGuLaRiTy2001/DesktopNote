@@ -4,9 +4,9 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from logging.handlers import RotatingFileHandler
 from ctypes import wintypes
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from typing import Callable
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QLocale, QRect, Qt, QTimer, QUrl

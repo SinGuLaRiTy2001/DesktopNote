@@ -18,7 +18,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _harness as H  # noqa: E402
-
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QColor, QPainter  # noqa: E402
 from PySide6.QtWidgets import QWidget  # noqa: E402

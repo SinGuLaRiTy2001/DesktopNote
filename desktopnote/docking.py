@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QElapsedTimer, QEasingCurve, QObject, QPoint, QRect, QTimer
+from PySide6.QtCore import QEasingCurve, QElapsedTimer, QObject, QPoint, QRect, QTimer
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import QApplication
 

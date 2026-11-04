@@ -24,10 +24,10 @@ from PySide6.QtWidgets import (
 )
 
 from . import icons, motion, win_effects
-from .i18n import tr
-from .models import Item, Note, now_iso
 from .docking import EdgeDock
 from .glass import GlassWindow
+from .i18n import tr
+from .models import Item, Note, now_iso
 from .reorder import RowReorder
 from .snapping import SnapMove
 from .theme import BODY_PT, Theme, glow_color, menu_qss, note_qss, tag_color

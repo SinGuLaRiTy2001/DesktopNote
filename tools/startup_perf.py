@@ -34,6 +34,7 @@ notes = [H.note(100 + 40 * i, 100 + 30 * i, 260, 220, f"Note {i}", [("todo", f"I
 
 t_import = time.perf_counter()
 import desktopnote.app as app_module  # noqa: E402  (PySide6 and the app.)
+
 t_import = time.perf_counter() - t_import
 app_module.SERVER_NAME += "-perf"
 app_module.win_effects.set_autostart = lambda on: None  # Never write to the user's registry.

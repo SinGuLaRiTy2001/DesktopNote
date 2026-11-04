@@ -13,7 +13,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from desktopnote.theme import (  # noqa: E402
-    DARK, GLOW_PILL_FACTOR, GLOW_TITLE_FACTOR, LIFTED_ALPHA, LIGHT, TAGS, blend, glow_color,
+    DARK,
+    GLOW_PILL_FACTOR,
+    GLOW_TITLE_FACTOR,
+    LIFTED_ALPHA,
+    LIGHT,
+    TAGS,
+    blend,
+    glow_color,
 )
 from desktopnote.widgets import DeletePill, ItemRow  # noqa: E402
 
