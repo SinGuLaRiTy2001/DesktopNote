@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0rc5] - 2026-11-04
+
 ### Changed
 
 - A notes file that cannot be read is kept as `notes-unreadable-<time>.json` instead of being
@@ -13,7 +15,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - The tray icon says so when the notes cannot be saved; saving is retried.
 - If an updated version does not start, the installed version comes back.
 - An update cut short, for example by a power cut, is undone at the next login or start of
-  DesktopNote, or finished if the new version had already started.
+  DesktopNote, or finished if the new version had already started. These safeguards apply to
+  updates installed from this version on.
 - On the first start, the language follows Windows.
 - Notes tucked away at an edge use far less power while the cursor is elsewhere.
 
@@ -127,7 +130,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Reminder notifications, keep-on-top, and a tray menu listing every note.
 - Settings for theme, language (English and Simplified Chinese), text size and start at login.
 
-[Unreleased]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc4...HEAD
+[Unreleased]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc5...HEAD
+[1.0.0rc5]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc4...v1.0.0rc5
 [1.0.0rc4]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc3...v1.0.0rc4
 [1.0.0rc3]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc2...v1.0.0rc3
 [1.0.0rc2]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc1...v1.0.0rc2
