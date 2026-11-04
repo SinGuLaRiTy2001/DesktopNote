@@ -152,7 +152,7 @@ class AboutWindow(GlassWindow):
     The button next to the version checks for an update and installs it (see updates.UpdateFlow).
 
     Attributes:
-        closing: Whether dismiss() has run; the window is then closed and deleted.
+        closing: Whether the window has closed (or dismiss() has run); it is then deleted.
     """
 
     def __init__(self, theme: Theme, updates: UpdateFlow):
@@ -281,6 +281,11 @@ class AboutWindow(GlassWindow):
         super().changeEvent(e)
         if e.type() == QEvent.ActivationChange and not self.isActiveWindow() and self.isVisible():
             self.dismiss()
+
+    def closeEvent(self, e):
+        """Marks the window as closing however it closes, e.g. with Alt+F4."""
+        self.closing = True
+        super().closeEvent(e)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)

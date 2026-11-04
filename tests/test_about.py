@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtGui import QCloseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel  # noqa: E402
 
@@ -110,6 +111,12 @@ class AboutWindowTest(unittest.TestCase):
     def test_escape_closes(self):
         win = self.open("en")
         QTest.keyClick(win, Qt.Key_Escape)
+        self.assertTrue(win.closing)
+
+    def test_any_close_counts(self):
+        win = self.open("en")
+        win.setAttribute(Qt.WA_DeleteOnClose, False)  # Kept to look at it afterwards.
+        QApplication.sendEvent(win, QCloseEvent())  # As Alt+F4 sends it.
         self.assertTrue(win.closing)
 
 
