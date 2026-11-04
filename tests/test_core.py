@@ -6,14 +6,16 @@ import os
 import sys
 import tempfile
 import unittest
+from ctypes import wintypes
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtCore import QPoint, QRect  # noqa: E402
 
-from desktopnote import i18n  # noqa: E402
+from desktopnote import i18n, snapping  # noqa: E402
 from desktopnote.docking import hidden_depth, reveal_zone, revealed_rect, shift_into  # noqa: E402
 from desktopnote.instance import claim  # noqa: E402
 from desktopnote.models import Item, Note  # noqa: E402
@@ -220,6 +222,26 @@ class SnapperTest(unittest.TestCase):
         self.assertIsNone(self.move(340, 100))  # Pulled sideways.
         self.move(310, 100)
         self.assertIsNone(self.move(310, 135))  # Pulled down.
+
+
+class SnapMoveTest(unittest.TestCase):
+    """A dragged window keeps the size Windows proposes, e.g. after moving to another scale."""
+
+    def test_the_proposed_size_is_kept(self):
+        from PySide6.QtWidgets import QApplication, QWidget
+
+        _app = QApplication.instance() or QApplication(sys.argv)
+        window = QWidget()
+        cursor = [(100, 10)]
+        with (mock.patch.object(snapping.win_effects, "window_rect", return_value=(0, 0, 300, 340)),
+              mock.patch.object(snapping.win_effects, "cursor_pos", side_effect=lambda: cursor[0]),
+              mock.patch.object(snapping.win_effects, "monitors", return_value=[])):
+            move = snapping.SnapMove(window)
+            move.begin()
+            cursor[0] = (110, 20)
+            rect = wintypes.RECT(10, 10, 460, 520)  # 1.5 times the size it started with.
+            move.place(rect, [])
+        self.assertEqual((rect.left, rect.top, rect.right, rect.bottom), (10, 10, 460, 520))
 
 
 class EdgeSnapperTest(unittest.TestCase):

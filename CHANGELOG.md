@@ -24,6 +24,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Command-line calls run at the same time could fail without a JSON answer.
 - Checking for or downloading an update could hang without an end.
 - An update could leave files half moved when one of them was in use.
+- A note whose top bar was off every screen could not be moved; notes now also come back on
+  screen after a change of resolution, scaling or taskbar, and when a monitor is plugged in.
+- New notes made from a note at a screen edge opened partly off the screen.
+- A note could change size when dragged to a monitor with a different scale.
 - Deleting an item while another item was being dragged, or right after a drop, could leave the
   note's rows unable to move.
 

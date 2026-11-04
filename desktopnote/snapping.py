@@ -380,9 +380,11 @@ class SnapMove(QObject):
         cursor = win_effects.cursor_pos()
         if self._origin is None or cursor is None:
             return
-        (left, top, right, bottom), (cursor_x, cursor_y) = self._origin
+        (left, top, _, _), (cursor_x, cursor_y) = self._origin
+        # The window keeps the size Windows proposes.
+        width, height = rect.right - rect.left, rect.bottom - rect.top
         dx, dy = cursor[0] - cursor_x, cursor[1] - cursor_y
-        free = (left + dx, top + dy, right + dx, bottom + dy)
+        free = (left + dx, top + dy, left + dx + width, top + dy + height)
         scale = self._window.devicePixelRatioF()
         before = self._state()
         snapped = self._snapper.update(free, others, scale, aligned)
@@ -394,5 +396,5 @@ class SnapMove(QObject):
         else:
             self._glide.target = target
         x, y = self._glide.position()
-        rect.left, rect.top, rect.right, rect.bottom = x, y, x + right - left, y + bottom - top
+        rect.left, rect.top, rect.right, rect.bottom = x, y, x + width, y + height
         self._at = (x, y)

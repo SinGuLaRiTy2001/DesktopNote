@@ -1,4 +1,4 @@
-"""App tests: the local server, and saving when the disk says no."""
+"""App tests: the local server, keeping notes reachable, and saving when the disk says no."""
 import json
 import os
 import sys
@@ -9,12 +9,14 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import QTimer  # noqa: E402
+from PySide6.QtCore import QRect, QTimer  # noqa: E402
+from PySide6.QtGui import QGuiApplication  # noqa: E402
 from PySide6.QtNetwork import QLocalServer, QLocalSocket  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from desktopnote import app  # noqa: E402
+from desktopnote.models import Note  # noqa: E402
 
 _app = QApplication.instance() or QApplication(sys.argv)
 
@@ -100,6 +102,39 @@ class ServerTest(unittest.TestCase):
             QTest.qWait(400)
         self.assertEqual(sock.state(), QLocalSocket.UnconnectedState)
         self.assertEqual(self.requests, [])
+
+
+class OnScreenTest(unittest.TestCase):
+    """A note's drag handle stays reachable; a lost note comes back."""
+
+    def setUp(self):
+        self.area = QGuiApplication.primaryScreen().availableGeometry()
+
+    def placed(self, x, y, w=300, h=340) -> tuple[int, int, int, int]:
+        note = Note(x=x, y=y, w=w, h=h)
+        app.DesktopNoteApp._ensure_on_screen(note)
+        return note.x, note.y, note.w, note.h
+
+    def test_a_reachable_note_stays_put(self):
+        a = self.area
+        self.assertEqual(self.placed(a.left() + 10, a.top() + 10), (a.left() + 10, a.top() + 10, 300, 340))
+        bottom = a.bottom() - 30  # Mostly below the screen, but its handle shows.
+        self.assertEqual(self.placed(a.left() + 10, bottom), (a.left() + 10, bottom, 300, 340))
+
+    def test_a_note_with_its_handle_above_the_screen_moves_in(self):
+        a = self.area
+        self.assertEqual(self.placed(a.left() + 10, a.top() - 150), (a.left() + 10, a.top(), 300, 340))
+
+    def test_a_note_off_every_screen_is_centred(self):
+        a = self.area
+        x, y, w, h = self.placed(a.right() + 5000, a.top())
+        self.assertEqual((w, h), (300, 340))
+        self.assertTrue(a.contains(QRect(x, y, w, h)))
+
+    def test_a_note_larger_than_the_screen_shrinks(self):
+        a = self.area
+        x, y, w, h = self.placed(a.left(), a.top() - 100, a.width() + 50, a.height() + 50)
+        self.assertEqual(QRect(x, y, w, h), a)
 
 
 class SaveTest(unittest.TestCase):

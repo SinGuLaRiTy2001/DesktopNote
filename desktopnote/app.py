@@ -33,6 +33,8 @@ SAVE_WARN_AFTER = 3  # Failed saves in a row before the tray says so.
 LABEL_CHARS = 32  # Tray-list entries are cut to this many characters.
 LOG_FILE = "desktopnote.log"  # In the data folder; only warnings and errors are written.
 LOG_BYTES = 256 * 1024  # The log is rotated at this size, keeping one older file.
+RESCUE_DELAY_MS = 500  # After a display change, before notes are brought back on screen.
+HANDLE_W, HANDLE_H = 120, 20  # The drag handle at the top centre of a note (widgets.Grabber).
 REQUEST_MS = 2_000  # How long a connection to the local server may take to send its message.
 TOAST_CHECK_MS = 10_000  # After this, a notification that failed is shown as a tray message.
 
@@ -127,9 +129,14 @@ class DesktopNoteApp:
         # True while this class calls setColorScheme itself; its caller rethemes, so the
         # resulting colorSchemeChanged signal is ignored.
         self._setting_scheme = False
-        # A monitor was unplugged or the layout changed while running: pull stranded notes back
-        # once Windows has settled the new layout.
-        qapp.screenRemoved.connect(lambda _screen: QTimer.singleShot(500, self._rescue_all))
+        # Monitors plugged in or out, or a change of resolution, scaling or work area: notes are
+        # brought back on screen and docked notes follow their edge once the layout has settled.
+        self._rescue_timer = QTimer(singleShot=True, interval=RESCUE_DELAY_MS)
+        self._rescue_timer.timeout.connect(self._rescue_all)
+        qapp.screenAdded.connect(self._watch_screen)
+        qapp.screenRemoved.connect(lambda _screen: self._rescue_timer.start())
+        for screen in qapp.screens():
+            self._watch_screen(screen, rescue=False)
 
         self._init_tray()
 
@@ -205,16 +212,22 @@ class DesktopNoteApp:
 
     @staticmethod
     def _ensure_on_screen(note: Note) -> None:
-        """Moves a note from a disconnected monitor back onto the primary screen.
+        """Moves a note whose drag handle cannot be reached back on screen.
 
-        A note counts as visible when at least 60 x 40 px of it lie on some screen; otherwise it
-        is centred on the primary screen and shrunk to fit if needed.
+        The handle can be reached when at least half of it lies on some screen's available area.
+        Otherwise the note moves inside the screen that shows most of it, or is centred on the
+        primary screen if no screen shows any of it; it is shrunk to fit if needed.
         """
+        handle = QRect(note.x + (note.w - HANDLE_W) // 2, note.y, HANDLE_W, HANDLE_H)
+        screens = QGuiApplication.screens()
+        if any(_area_of(screen.availableGeometry().intersected(handle)) * 2 >= _area_of(handle)
+               for screen in screens):
+            return
         rect = QRect(note.x, note.y, note.w, note.h)
-        for screen in QGuiApplication.screens():
-            visible = screen.availableGeometry().intersected(rect)
-            if visible.width() >= 60 and visible.height() >= 40:
-                return
+        best = max(screens, key=lambda screen: _area_of(screen.availableGeometry().intersected(rect)), default=None)
+        if best is not None and _area_of(best.availableGeometry().intersected(rect)) > 0:
+            _clamp(note, best.availableGeometry())
+            return
         area = QGuiApplication.primaryScreen().availableGeometry()
         note.w = min(note.w, area.width())
         note.h = min(note.h, area.height())
@@ -238,6 +251,7 @@ class DesktopNoteApp:
         if near is not None:
             src = near.note  # Where it shows, even while hidden at an edge.
             note.x, note.y = src.x + 32, src.y + 32
+            _clamp(note, near.screen().availableGeometry())
             beside = near.dock.place_beside(note.w, note.h)
             if beside is not None:
                 note.x, note.y = beside.x(), beside.y()
@@ -309,8 +323,21 @@ class DesktopNoteApp:
             win.setGeometry(note.x, note.y, note.w, note.h)
 
     def _rescue_all(self, *_) -> None:
+        """Brings every note back on screen; see _rescue."""
         for win in self.windows.values():
             self._rescue(win)
+
+    def _watch_screen(self, screen, rescue: bool = True) -> None:
+        """Brings the notes back on screen (see _rescue_all) after every change to a screen.
+
+        Args:
+            screen: The QScreen to watch.
+            rescue: Whether to bring them back now as well, for a screen that was just added.
+        """
+        for signal in (screen.geometryChanged, screen.availableGeometryChanged, screen.logicalDotsPerInchChanged):
+            signal.connect(lambda *_: self._rescue_timer.start())
+        if rescue:
+            self._rescue_timer.start()
 
     def show_all(self) -> None:
         """Brings every note to the front, or creates one when there are none.
@@ -663,6 +690,18 @@ class DesktopNoteApp:
         self.save_now()
         self.tray.hide()
         self.qapp.quit()
+
+
+def _area_of(rect: QRect) -> int:
+    """Returns the area of rect, 0 if it is empty."""
+    return max(0, rect.width()) * max(0, rect.height())
+
+
+def _clamp(note: Note, area: QRect) -> None:
+    """Moves a note inside area, shrinking it to fit if needed."""
+    note.w, note.h = min(note.w, area.width()), min(note.h, area.height())
+    note.x = max(area.left(), min(note.x, area.right() + 1 - note.w))
+    note.y = max(area.top(), min(note.y, area.bottom() + 1 - note.h))
 
 
 # --- Single instance ---------------------------------------------------------
