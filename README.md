@@ -39,8 +39,9 @@ stay exactly where you left them.
 - **Automatic saving**: changes are saved as you type, with a backup of the previous version and
   one copy per day for the last week. If saving keeps failing, the tray icon tells you.
 - **Updates**: check for a new version in the About window and install it with one click; notes
-  and settings are kept. A pre-release is also offered newer pre-releases. When run from source,
-  the release page opens instead.
+  and settings are kept. If the new version does not start, the installed one comes back. A
+  pre-release is also offered newer pre-releases. When run from source, the release page opens
+  instead.
 
 ## Getting started
 
@@ -144,7 +145,8 @@ notes to another computer, copy this folder.
 A file that cannot be read is never overwritten: it is renamed to `notes-unreadable-<time>.json`,
 the notes come from the backup if possible, and the tray icon says so. Warnings and errors, if
 any, are logged to `desktopnote.log`, and `DesktopNote.ico` is the icon on DesktopNote's
-notifications.
+notifications. During an update, the notes are also copied to `notes.before-update.json` until the
+new version has started.
 
 DesktopNote connects to the internet only when you click **Check for Updates**: it asks GitHub
 for the latest release and, if you install it, downloads it from there.

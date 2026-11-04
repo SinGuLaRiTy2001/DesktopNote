@@ -11,6 +11,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
   replaced, the notes come from the backup if possible, and the tray icon says so.
 - One copy of the notes per day is kept for the last week, in the data folder's `backups`.
 - The tray icon says so when the notes cannot be saved; saving is retried.
+- If an updated version does not start, the installed version comes back.
 - Notes tucked away at an edge use far less power while the cursor is elsewhere.
 
 ### Fixed
@@ -21,6 +22,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A notes file with unexpected content could keep DesktopNote from starting, and values a newer
   version added were lost on saving.
 - Command-line calls run at the same time could fail without a JSON answer.
+- Checking for or downloading an update could hang without an end.
+- An update could leave files half moved when one of them was in use.
 - Deleting an item while another item was being dragged, or right after a drop, could leave the
   note's rows unable to move.
 

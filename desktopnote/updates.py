@@ -1,9 +1,11 @@
 """Checks GitHub for a newer release and installs it into the app folder.
 
-The release is downloaded, checked against its published SHA-256 and unpacked. Once the app has
-quit, a hidden PowerShell script replaces the files listed in the installed release's manifest
-(MANIFEST) with the new ones, restores them if that fails, and starts the app again. The data
-folder (storage.data_dir) is not changed.
+The release is downloaded, checked against its published SHA-256 and unpacked into the app
+folder (STAGING). Once the app has quit, a hidden PowerShell script replaces the files listed in
+the installed release's manifest (MANIFEST) with the new ones and starts the new version, which
+confirms with confirm_started(). If the swap fails, or the new version does not confirm within
+STARTED_S, the script puts the old files back and starts the old version. The notes in the data
+folder (storage.data_dir) are not changed.
 
 Only a release build (PyInstaller) installs updates; from source, the release page is opened.
 """
@@ -34,9 +36,13 @@ MANIFEST = "_internal/release-files.txt"  # A release's top-level files (scripts
 # The top-level files of releases from before the manifest (1.0.0rc1, 1.0.0rc2).
 EARLY_RELEASE_FILES = ["DesktopNote.exe", "desktopnote-cli.exe", "_internal", "LICENSE", "THIRD_PARTY_NOTICES.md",
                        "licenses"]
-NOTES_BACKUP = "notes.before-update.json"  # Kept until the app runs again after the swap.
-STARTED_S = 5  # How long the app must keep running after the swap before the backup goes.
+NOTES_BACKUP = "notes.before-update.json"  # Kept until the new version has started.
+STAGING = ".update-new"  # The unpacked release, in the app folder.
+OLD = ".update-old"  # The replaced files, in the app folder, until the new version has started.
+PENDING = "pending"  # In OLD while the new version has not confirmed that it started.
+STARTED_S = 60  # How long the new version has to confirm that it started.
 STAGES = {"a": 0, "b": 1, "rc": 2}  # Pre-release stages, before the final release.
+TIMEOUT_MS = 30_000  # A request stops when no data arrives for this long.
 _VERSION = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?$")
 
 
@@ -105,6 +111,15 @@ def pick_release(releases: list[dict], current: str) -> Release | None:
     return best
 
 
+# --- Network -------------------------------------------------------------------------
+def _request(url: str) -> QNetworkRequest:
+    """Returns a GET request for url that times out after TIMEOUT_MS without data."""
+    request = QNetworkRequest(QUrl(url))
+    request.setRawHeader(b"User-Agent", b"DesktopNote")
+    request.setTransferTimeout(TIMEOUT_MS)
+    return request
+
+
 # --- Installing ----------------------------------------------------------------------
 def app_folder() -> Path | None:
     """Returns the folder of the running release build, or None when running from source."""
@@ -143,69 +158,118 @@ def backup_notes(data: Path) -> Path | None:
     return target
 
 
+_PS_QUOTES = "'‘’‚‛"  # The characters PowerShell reads as a single quote.
+
+
 def _ps(text: str | Path) -> str:
-    """Quotes a value for a PowerShell script."""
-    return "'" + str(text).replace("'", "''") + "'"
+    """Quotes a value as a PowerShell string literal, doubling every kind of single quote in it."""
+    return "'" + "".join(c * 2 if c in _PS_QUOTES else c for c in str(text)) + "'"
 
 
 def install_script(app: Path, new: Path, staging: Path, pid: int, old_names: list[str], data: Path,
-                   version: str, exe: str = "DesktopNote.exe") -> str:
+                   version: str, exe: str = "DesktopNote.exe", started_s: int = STARTED_S) -> str:
     """Returns the PowerShell script that swaps the app files once the app has quit.
 
-    It moves the old release's files and the ones the new release replaces into a folder inside
-    the app folder, moves the new files in, and starts the app. On success it removes that
-    folder; on failure it moves the old files back and notes the error in desktopnote.log. Either
-    way it removes the download, and the notes backup once the app keeps running.
+    It moves the old release's files and the ones the new release replaces into OLD, moves the
+    new files in and starts the new version. Once that version confirms (it deletes PENDING), the
+    script removes OLD and the notes backup. If the swap fails, or there is no confirmation
+    within ``started_s``, it stops the new version, moves the old files back, notes the error in
+    desktopnote.log and starts the old version; the notes backup is kept. Either way it removes
+    the download.
 
     Args:
         app: The app folder to update.
         new: The unpacked release's app folder.
-        staging: The download's temporary folder, removed in any case.
+        staging: The download's folder, removed in any case.
         pid: The running app's process id, to wait for.
         old_names: The installed release's top-level files (release_files()).
         data: The data folder, holding the notes backup and desktopnote.log.
         version: The new version, for the log.
         exe: The executable to start afterwards.
+        started_s: How long the new version has to confirm that it started.
     """
     names = ", ".join(_ps(name) for name in old_names) or "@()"
     return f"""$ErrorActionPreference = 'Stop'
-$app = {_ps(app)}; $new = {_ps(new)}; $old = Join-Path $app '.update-old'
+$app = {_ps(app)}; $new = {_ps(new)}; $old = Join-Path $app {_ps(OLD)}; $pending = Join-Path $old {_ps(PENDING)}
+$exe = Join-Path $app {_ps(exe)}
 $replace = @({names}) + @(Get-ChildItem -LiteralPath $new -Force | ForEach-Object {{ $_.Name }}) | Sort-Object -Unique
+$moved = @(); $added = @()
+
+function Write-Log($text) {{
+    $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss,fff') WARNING desktopnote.updates: update to {version} failed, "
+    try {{ Add-Content -LiteralPath {_ps(data / "desktopnote.log")} -Value ($line + $text) -Encoding utf8 }} catch {{ }}
+}}
+
+function Move-Entry($from, $to) {{  # A rename: the whole file or folder moves, or nothing does.
+    if (Test-Path -LiteralPath $from -PathType Container) {{ [IO.Directory]::Move($from, $to) }}
+    else {{ [IO.File]::Move($from, $to) }}
+}}
+
+function Restore-Old {{
+    Remove-Item -LiteralPath $pending -Force -ErrorAction SilentlyContinue
+    foreach ($name in $script:added) {{
+        Remove-Item -LiteralPath (Join-Path $app $name) -Recurse -Force -ErrorAction SilentlyContinue
+    }}
+    foreach ($name in $script:moved) {{
+        try {{ Move-Entry (Join-Path $old $name) (Join-Path $app $name) }} catch {{ }}
+    }}
+    if ((Test-Path -LiteralPath $old) -and -not (Get-ChildItem -LiteralPath $old -Force)) {{
+        Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
+    }}
+}}
+
 try {{ Wait-Process -Id {pid} -Timeout 60 }} catch {{ }}
 Start-Sleep -Milliseconds 300
-$moved = @(); $added = @(); $ok = $false
+$swapped = $false
 try {{
     if (Test-Path -LiteralPath $old) {{ Remove-Item -LiteralPath $old -Recurse -Force }}
     New-Item -ItemType Directory -Path $old | Out-Null
+    New-Item -ItemType File -Path $pending | Out-Null
     foreach ($name in $replace) {{
         $target = Join-Path $app $name
-        if (Test-Path -LiteralPath $target) {{ Move-Item -LiteralPath $target -Destination $old; $moved += $name }}
+        if (Test-Path -LiteralPath $target) {{ Move-Entry $target (Join-Path $old $name); $moved += $name }}
     }}
     foreach ($item in Get-ChildItem -LiteralPath $new -Force) {{
-        Move-Item -LiteralPath $item.FullName -Destination $app; $added += $item.Name
+        Move-Entry $item.FullName (Join-Path $app $item.Name); $added += $item.Name
     }}
-    $ok = $true
+    $swapped = $true
 }} catch {{
     $err = $_.Exception.Message
-    foreach ($name in $added) {{
-        Remove-Item -LiteralPath (Join-Path $app $name) -Recurse -Force -ErrorAction SilentlyContinue
-    }}
-    foreach ($name in $moved) {{
-        Move-Item -LiteralPath (Join-Path $old $name) -Destination $app -ErrorAction SilentlyContinue
-    }}
-    if (-not (Get-ChildItem -LiteralPath $old -Force)) {{ Remove-Item -LiteralPath $old -Force }}
-    $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss,fff') WARNING desktopnote.updates: "
-    $line += "update to {version} failed, the installed version stays: $err"
-    Add-Content -LiteralPath {_ps(data / "desktopnote.log")} -Value $line -Encoding utf8
+    Restore-Old
+    Write-Log "the installed version stays: $err"
 }}
-if ($ok) {{ Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue }}
 Remove-Item -LiteralPath {_ps(staging)} -Recurse -Force -ErrorAction SilentlyContinue
-$started = Start-Process -FilePath (Join-Path $app {_ps(exe)}) -PassThru
-Start-Sleep -Seconds {STARTED_S}
-if (-not $started.HasExited) {{
-    Remove-Item -LiteralPath {_ps(data / NOTES_BACKUP)} -Force -ErrorAction SilentlyContinue
+if ($swapped) {{
+    $started = $null
+    try {{ $started = Start-Process -FilePath $exe -PassThru }} catch {{ }}
+    $deadline = (Get-Date).AddSeconds({started_s})
+    while ($started -and (Test-Path -LiteralPath $pending) -and (Get-Date) -lt $deadline) {{
+        Start-Sleep -Milliseconds 250
+    }}
+    if (Test-Path -LiteralPath $pending) {{
+        if ($started) {{
+            try {{ Stop-Process -Id $started.Id -Force; $started.WaitForExit(10000) | Out-Null }} catch {{ }}
+        }}
+        Restore-Old
+        Write-Log "the new version did not start, so the installed version stays"
+    }} else {{
+        Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath {_ps(data / NOTES_BACKUP)} -Force -ErrorAction SilentlyContinue
+        exit
+    }}
 }}
+Start-Process -FilePath $exe
 """
+
+
+def confirm_started(folder: Path | None = None) -> None:
+    """Tells a running install script that the new version has started (see install_script)."""
+    folder = folder or app_folder()
+    if folder is not None:
+        try:
+            (folder / OLD / PENDING).unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 class UpdateChecker(QObject):
@@ -231,8 +295,7 @@ class UpdateChecker(QObject):
         """Starts a check; ``finished`` reports the result."""
         if self._reply is not None:
             return
-        request = QNetworkRequest(QUrl(self.url))
-        request.setRawHeader(b"User-Agent", b"DesktopNote")
+        request = _request(self.url)
         request.setRawHeader(b"Accept", b"application/vnd.github+json")
         self._reply = self._net.get(request)
         self._reply.finished.connect(self._done)
@@ -290,9 +353,7 @@ class Updater(QObject):
 
     def _get(self, url: str, on_done) -> None:
         """Downloads ``url`` and passes the finished reply to ``on_done``."""
-        request = QNetworkRequest(QUrl(url))
-        request.setRawHeader(b"User-Agent", b"DesktopNote")
-        reply = self._net.get(request)
+        reply = self._net.get(_request(url))
         reply.finished.connect(lambda: on_done(reply))
 
     def _got_checksum(self, reply: QNetworkReply) -> None:
@@ -322,13 +383,14 @@ class Updater(QObject):
             self.failed.emit(str(exc))
 
     def _install(self, data: bytes) -> None:
-        """Unpacks the release, backs up the notes and starts the install script.
+        """Unpacks the release into STAGING, backs up the notes and starts the install script.
 
-        The download's temporary folder and the notes backup are removed again if this stops
-        before the script runs.
+        STAGING and the notes backup are removed again if this stops before the script runs.
         """
-        staging = Path(tempfile.mkdtemp(prefix=f"DesktopNote-{self._release.version}-"))
+        staging = self._app / STAGING
+        shutil.rmtree(staging, ignore_errors=True)
         try:
+            staging.mkdir()
             archive = staging / "release.zip"
             archive.write_bytes(data)
             with zipfile.ZipFile(archive) as zf:

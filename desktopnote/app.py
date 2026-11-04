@@ -22,7 +22,7 @@ from .models import Item, Note
 from .note_window import GlassMenu, NoteWindow, glass_menu
 from .storage import Store, data_dir
 from .theme import DARK, FONT_FAMILIES, LIGHT, Theme, menu_qss, nearest_text_scale, tag_color
-from .updates import UpdateFlow
+from .updates import UpdateFlow, confirm_started
 from .widgets import GlassToolTip, SegmentedControl, TextSizeSlider, default_due, reminder_state
 
 log = logging.getLogger(__name__)
@@ -139,7 +139,8 @@ class DesktopNoteApp:
         """Opens a window for every note and starts the reminder checks.
 
         On the first run it also registers autostart and adds a welcome note when there are no
-        notes yet. It then reports data files that could not be read.
+        notes yet. It then reports data files that could not be read, and confirms to an update
+        that this version has started.
         """
         settings = self.store.settings
         if settings.first_run:
@@ -164,6 +165,7 @@ class DesktopNoteApp:
         self.check_reminders()
         self.reminder_timer.start()
         self._report_unreadable()
+        confirm_started()  # Lets a running update finish.
 
     def _report_unreadable(self) -> None:
         """Tells the user, from the tray, about data files that could not be read."""
