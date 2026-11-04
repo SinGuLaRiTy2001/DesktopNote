@@ -1,8 +1,9 @@
 """Takes the README screenshots: a few sample notes on a soft wallpaper, light and dark.
 
 The notes are real app windows over a stand-in wallpaper, captured from the screen, so the
-frosted glass shows as it does on a desktop. Images go to docs/; for sharp images on high-DPI
-screens, set QT_SCALE_FACTOR=2 first.
+frosted glass shows as it does on a desktop. The scene is placed on the monitor with the highest
+Windows display scaling, which sets the images' resolution (1.5x the logical size at 150 %).
+Images go to docs/.
 
     python tools/screenshot.py                    # -> docs/screenshot-light.png, -dark.png
     python tools/screenshot.py --language zh
@@ -17,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _harness as H  # noqa: E402
 from PySide6.QtCore import QPointF, QRect, Qt  # noqa: E402
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QRadialGradient  # noqa: E402
+from PySide6.QtGui import QColor, QGuiApplication, QLinearGradient, QPainter, QRadialGradient  # noqa: E402
 from PySide6.QtWidgets import QWidget  # noqa: E402
 
 DOCS = H.REPO / "docs"
@@ -86,12 +87,14 @@ def main() -> int:
     ap.add_argument("--language", choices=("en", "zh"), default="en")
     args = ap.parse_args()
     H.qapp()
-    scene = QRect(200, 140, SCENE_W, SCENE_H)
+    screen = max(QGuiApplication.screens(), key=lambda s: s.devicePixelRatio())
+    centre = screen.availableGeometry().center()
+    scene = QRect(centre.x() - SCENE_W // 2, centre.y() - SCENE_H // 2, SCENE_W, SCENE_H)
     wall = Wallpaper()  # Created first, so the pinned notes open above it.
     wall.setGeometry(scene)
     wall.show()
     x0, y0 = scene.x(), scene.y()
-    layout = [(x0 + 40, y0 + 50, 300, 250), (x0 + 380, y0 + 40, 230, 178), (x0 + 540, y0 + 270, 270, 112)]
+    layout = [(x0 + 40, y0 + 50, 300, 254), (x0 + 380, y0 + 40, 272, 182), (x0 + 540, y0 + 270, 272, 112)]
     notes = [H.note(x, y, w, h, title, items, tint=tint)
              for (x, y, w, h), (title, tint, items) in zip(layout, content(args.language))]
     app = H.start_app(notes, theme="light", language=args.language)

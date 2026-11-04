@@ -11,7 +11,7 @@ Images go to `tools/out/`.
 | `contrast_probe.py` | Real glass backgrounds over black/white/striped desktops, in the format `tests/test_contrast.py` uses |
 | `render_sheet.py` | Contact sheet: light/dark × English/Chinese × every text size |
 | `startup_perf.py` | Startup time, memory, idle CPU |
-| `screenshot.py` | README screenshots in `docs/`, light and dark (run with `QT_SCALE_FACTOR=2`) |
+| `screenshot.py` | README screenshots in `docs/`, light and dark, on the monitor with the highest display scaling |
 
 ```powershell
 .\.venv\Scripts\python tools\align_audit.py
