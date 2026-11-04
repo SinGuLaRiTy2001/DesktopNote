@@ -70,8 +70,8 @@ FONT_FAMILIES = ["Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI"]  # 
 
 # --- Corner radii ------------------------------------------------------------
 
-# Corner radii by role, in logical px. Parts with the same role share one; shapes that are
-# circles, pills or concentric insets of another shape derive their own.
+# Corner radii by role, in logical px. Circles, pills and shapes inset in another shape work out
+# their own radius.
 WINDOW_RADIUS = 8  # Notes, popups and About: Windows 11's rounding, so the painted border meets DWM's clip.
 MENU_RADIUS = 12  # Menu panels, which DWM does not round.
 CONTROL_RADIUS = 7  # Hover and pressed backgrounds of a note's buttons and rows.

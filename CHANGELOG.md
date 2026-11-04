@@ -12,11 +12,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - More space between a note's title and its items.
+- Buttons in notes and in the date and colour pickers have the same corners when hovered and when
+  pressed, and the date picker's month arrows show a press.
+- The time in the date picker fades its highlight in and out, like the other buttons.
+- Cancel and Delete in a note's delete confirmation are spaced alike; the narrowest a note can be
+  is 12 px wider.
 
 ### Fixed
 
 - A note being edited tucked away as soon as it was let go at an edge; it now stays out until
   editing ends.
+- The date and colour pickers opened without fading in.
+- New Note in a note's menu had the icon of Show All Notes.
 
 ## [1.0.0rc5] - 2026-11-04
 

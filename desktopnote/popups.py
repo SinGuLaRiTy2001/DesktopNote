@@ -227,7 +227,7 @@ class GlassPopup(QWidget):
         return line
 
     def _attach_hover(self) -> None:
-        """Animates the hover of the popup's buttons; text buttons get the corners of their pressed state."""
+        """Animates the hover of the popup's buttons; text buttons hover with FIELD_RADIUS corners."""
         for button in self.panel.findChildren(QPushButton):
             button.setProperty("hoverRadius", FIELD_RADIUS)
         motion.HoverFx.attach(self)
