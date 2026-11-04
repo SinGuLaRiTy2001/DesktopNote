@@ -1212,7 +1212,20 @@ class NoteWindow(GlassWindow):
                               [win.dock.snap_alignment() for win, _ in notes])
         index = self._snap_move.snapped_to()
         self._show_snap_target(notes[index][0] if index is not None else None)
-        self.dock.follow_drag(self._snap_move.pushed(), self._snap_move.stuck())
+        self.dock.follow_drag(self._hide_edge(), self._snap_move.stuck())
+
+    def _hide_edge(self) -> str:
+        """Returns the edge letting go hides the note in, or "".
+
+        That is the edge the note is pushed into or, while it is snapped to a docked note, that
+        note's edge; none once Esc has cancelled the drag.
+        """
+        pushed = self._snap_move.pushed()
+        if pushed is not None:
+            return pushed.edge
+        if self._snap_target is not None and not self._snap_move.cancelled:
+            return self._snap_target.dock.edge
+        return ""
 
     def _show_snap_target(self, target: "NoteWindow | None") -> None:
         """Keeps the note snapped to slid out while it is the target."""
@@ -1243,8 +1256,9 @@ class NoteWindow(GlassWindow):
             if msg.message == win_effects.WM_EXITSIZEMOVE:
                 exit_move = True
                 self._snap_move.stop()
+                edge = self._hide_edge()
                 self._show_snap_target(None)
-                self.dock.drag_finished(self._moved, self._snap_move.stuck(), self._snap_move.pushed())
+                self.dock.drag_finished(self._moved, self._snap_move.stuck(), edge)
         result = super().nativeEvent(event_type, message)
         if exit_move:
             self._sync_geometry()

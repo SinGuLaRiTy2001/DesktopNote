@@ -36,8 +36,8 @@ line lets scripts and AI agents add to your notes too.
 - Frosted-glass notes that follow Windows' light or dark mode, or a theme you choose.
 - Snap to align: a note dragged close to another snaps next to it with edges aligned, and sticks to
   monitor edges.
-- Edge docking: push a note into the left, right or top edge of any monitor to tuck it away; it
-  slides out when the cursor reaches it.
+- Edge docking: push a note into the left, right or top edge of any monitor to tuck it away, or
+  snap it to a tucked-away note; it slides out when the cursor reaches it.
 - Mixed-DPI multi-monitor support: move notes between monitors with different Windows display
   scaling, and they keep their size. Tested with three monitors at 100%, 150% and 125% display
   scaling.
@@ -139,8 +139,9 @@ opens a palette with hex input), to keep the note on top, or to delete it.
 
 **Docking and monitors.** Drag a note against the left, right or top edge of a monitor and push on
 until it turns see-through, then let go. The note tucks away, leaving a thin strip; move the cursor
-onto the strip to show it, or drag it away from the edge to untuck it. To move a note to another
-monitor, drag it across; at an edge shared by two monitors, push on through.
+onto the strip to show it, or drag it away from the edge to untuck it. A note snapped to a
+tucked-away note turns see-through too, and tucks away at the same edge when you let go. To move a
+note to another monitor, drag it across; at an edge shared by two monitors, push on through.
 
 **Tray menu and settings.** Click the tray icon to bring every note to the front, or right-click it
 for the menu: it lists every note by title or first line, and **Settings** holds the theme, text

@@ -1,9 +1,10 @@
 """Dock to edge: a note pushed into a monitor's edge hides there, leaving PEEK px on screen.
 
-A note let go while pushed into a left, right or top edge (see snapping.EdgeSnapper) docks: it
-stays above other windows, slides out when the cursor reaches it and back once the cursor has
-left. It slides within its window, opaque and in one piece, frosted by a snapshot of what is
-behind it, and a ShadowWindow casts its shadow. Pushed into an edge or slid in, it eases to
+A note let go while pushed into a left, right or top edge (see snapping.EdgeSnapper), or while
+snapped to a docked note (which aligns it on that note's edge), docks: it stays above other
+windows, slides out when the cursor reaches it and back once the cursor has left. It slides
+within its window, opaque and in one piece, frosted by a snapshot of what is behind it, and a
+ShadowWindow casts its shadow. While letting go would hide it, or slid in, it eases to
 HIDDEN_OPACITY; slid in, it lets clicks through. While docked, ``note.x`` and ``note.y`` hold
 the slid-out position.
 """
@@ -301,18 +302,18 @@ class EdgeDock(QObject):
             self._set_opacity(1.0)
             self._show_glass()
 
-    def follow_drag(self, pushed: Stick | None, stuck: list[Stick]) -> None:
+    def follow_drag(self, edge: str, stuck: list[Stick]) -> None:
         """Shows, while the note is dragged, whether letting go hides it.
 
-        Pushed into an edge, the note eases to HIDDEN_OPACITY; when the push ends, it eases back.
+        While letting go would hide it, the note eases to HIDDEN_OPACITY; once that ends, it eases
+        back.
 
         Args:
-            pushed: The edge the note is pushed into, or None.
+            edge: The edge letting go would hide the note in ("left", "right" or "top"), or "".
             stuck: The edges the note sticks to.
         """
         if stuck:
             self._shadow_window()
-        edge = pushed.edge if pushed is not None else ""
         if edge == self._pushed:
             return
         self._pushed = edge
@@ -323,21 +324,21 @@ class EdgeDock(QObject):
         else:
             self._fade_to(1.0, self._show_glass)
 
-    def drag_finished(self, moved: bool, stuck: list[Stick], pushed: Stick | None) -> None:
+    def drag_finished(self, moved: bool, stuck: list[Stick], edge: str) -> None:
         """Docks, keeps or undocks the note after a move or resize.
 
-        Let go while pushed into an edge, the note docks there and slides in at once. A docked
-        note moved along its edge or resized stays docked; moved anywhere else, it undocks.
+        Let go where it hides (edge), the note docks there and slides in at once. A docked note
+        moved along its edge or resized stays docked; moved anywhere else, it undocks.
 
         Args:
             moved: Whether the note was moved, not only resized.
             stuck: The edges the note sticks to where it was let go.
-            pushed: The edge it was pushed into, or None.
+            edge: The edge letting go hides the note in ("left", "right" or "top"), or "".
         """
         self._dragging = False
         self._pushed = ""
         geo = self._window.geometry()
-        revealed = self._dock_to(geo, pushed.edge) if pushed is not None else None
+        revealed = self._dock_to(geo, edge) if edge else None
         if revealed is not None:
             self._place(revealed)
             self.shown = False

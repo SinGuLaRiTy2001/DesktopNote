@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A note let go while snapped to a note tucked away at an edge tucks away at that edge too.
+
 ## [1.0.0rc5] - 2026-11-04
 
 ### Changed
