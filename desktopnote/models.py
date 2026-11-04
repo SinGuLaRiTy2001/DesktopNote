@@ -1,10 +1,20 @@
-"""Plain data model for notes, serialised to JSON by :mod:`desktopnote.storage`."""
+"""Plain data model for notes, serialised to JSON by :mod:`desktopnote.storage`.
+
+Reading is lenient: a value of the wrong type is replaced by the field's default, and keys this
+version does not know are kept in ``extra`` and written back unchanged.
+"""
 from __future__ import annotations
 
+import functools
+import logging
+import types
+import typing
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime
 from typing import Literal
+
+log = logging.getLogger(__name__)
 
 ItemType = Literal["text", "todo", "reminder"]
 
@@ -19,6 +29,72 @@ def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+# --- Serialisation -----------------------------------------------------------
+@functools.cache
+def _hints(cls: type) -> dict[str, object]:
+    """Returns the resolved field annotations of a dataclass."""
+    return typing.get_type_hints(cls)
+
+
+def _fits(value: object, hint: object) -> bool:
+    """Returns whether a JSON value is valid for a field annotated with ``hint``."""
+    origin = typing.get_origin(hint)
+    if origin is Literal:
+        return value in typing.get_args(hint)
+    if origin in (typing.Union, types.UnionType):
+        return any(_fits(value, arg) for arg in typing.get_args(hint))
+    if origin is not None:  # A generic such as list[Item]: only the container is checked.
+        return isinstance(value, origin)
+    if hint is type(None):
+        return value is None
+    if hint in (int, float):
+        return isinstance(value, (int, float) if hint is float else int) and not isinstance(value, bool)
+    return isinstance(value, hint)
+
+
+def _split(cls: type, d: dict, skip: tuple[str, ...] = ()) -> tuple[dict, dict]:
+    """Splits a serialised dict into valid field values of ``cls`` and the keys it does not know.
+
+    Values of the wrong type are logged and dropped, so those fields keep their defaults.
+
+    Args:
+        cls: The dataclass to build.
+        d: The serialised dict.
+        skip: Keys the caller reads itself; they are in neither result.
+
+    Returns:
+        The field values, and the unknown keys with their values.
+    """
+    hints = _hints(cls)
+    known, extra = {}, {}
+    for key, value in d.items():
+        if key in skip:
+            continue
+        if key == "extra" or key not in hints:
+            extra[key] = value
+        elif _fits(value, hints[key]):
+            known[key] = float(value) if hints[key] is float else value
+        else:
+            log.warning("Ignored the invalid %s.%s value %r", cls.__name__, key, value)
+    return known, extra
+
+
+def _to_dict(obj, **values) -> dict:
+    """Returns a dataclass that has an ``extra`` field as a JSON-serialisable dict.
+
+    Args:
+        obj: The dataclass instance.
+        **values: Serialised values that replace the fields of the same name.
+
+    Returns:
+        The keys in ``obj.extra``, then the fields, then ``values``; later keys replace earlier
+        ones of the same name.
+    """
+    known = {f.name: getattr(obj, f.name) for f in fields(obj) if f.name != "extra"}
+    return {**obj.extra, **known, **values}
+
+
+# --- Model -------------------------------------------------------------------
 @dataclass
 class Item:
     """A single entry in a note: a text block, a to-do or a reminder.
@@ -30,6 +106,7 @@ class Item:
         due: Reminders only: the due time as a local ISO string, e.g. "2026-10-21T18:00:00".
         notified: Whether the overdue notification for a reminder has already been shown.
         id: Unique identifier of the item.
+        extra: Keys this version does not know, written back unchanged.
     """
 
     type: ItemType = "text"
@@ -38,6 +115,7 @@ class Item:
     due: str | None = None
     notified: bool = False
     id: str = field(default_factory=new_id)
+    extra: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def due_dt(self) -> datetime | None:
@@ -49,11 +127,15 @@ class Item:
         except ValueError:
             return None
 
+    def to_dict(self) -> dict:
+        """Returns the item as a JSON-serialisable dict."""
+        return _to_dict(self)
+
     @classmethod
     def from_dict(cls, d: dict) -> "Item":
-        """Builds an item from a serialised dict, ignoring unknown keys."""
-        known = {k: d[k] for k in cls.__dataclass_fields__ if k in d}
-        return cls(**known)
+        """Builds an item from a serialised dict, keeping unknown keys in ``extra``."""
+        known, extra = _split(cls, d)
+        return cls(**known, extra=extra)
 
 
 # Earlier tint names (panel tints, then the first tag set) mapped to the nearest current tag.
@@ -71,10 +153,10 @@ class Note:
     """A sticky note: its window geometry, appearance and items.
 
     Attributes:
-        x: Left edge of the note window, in screen pixels.
-        y: Top edge of the note window, in screen pixels.
-        w: Width of the note window, in pixels.
-        h: Height of the note window, in pixels.
+        x: Left edge of the note window, in Qt's device-independent screen coordinates.
+        y: Top edge of the note window, in the same coordinates.
+        w: Width of the note window, in device-independent pixels.
+        h: Height of the note window, in device-independent pixels.
         tint: A ``theme.TAGS`` key or a custom "#RRGGBB" colour, shown as a soft wash at the
             top of the note.
         pinned: Whether the note is kept on top of other windows.
@@ -85,6 +167,7 @@ class Note:
         id: Unique identifier of the note.
         created: Creation time as a local ISO string.
         updated: Last modification time as a local ISO string.
+        extra: Keys this version does not know, written back unchanged.
     """
 
     x: int = 200
@@ -99,6 +182,7 @@ class Note:
     id: str = field(default_factory=new_id)
     created: str = field(default_factory=now_iso)
     updated: str = field(default_factory=now_iso)
+    extra: dict = field(default_factory=dict, repr=False, compare=False)
 
     def is_empty(self) -> bool:
         """Returns whether the title and every item's text are blank."""
@@ -117,18 +201,23 @@ class Note:
 
     def to_dict(self) -> dict:
         """Returns the note, including its items, as a JSON-serialisable dict."""
-        return asdict(self)
+        return _to_dict(self, items=[item.to_dict() for item in self.items])
 
     @classmethod
     def from_dict(cls, d: dict) -> "Note":
-        """Builds a note from a serialised dict.
+        """Builds a note from a serialised dict, keeping unknown keys in ``extra``.
 
-        Unknown keys are ignored and legacy tint names are migrated via ``LEGACY_TINTS``.
+        Items that are not dicts are skipped, and legacy tint names are migrated via
+        ``LEGACY_TINTS``.
         """
-        known = {k: d[k] for k in cls.__dataclass_fields__ if k in d and k != "items"}
-        note = cls(**known)
+        known, extra = _split(cls, d, skip=("items",))
+        note = cls(**known, extra=extra)
         note.tint = LEGACY_TINTS.get(note.tint, note.tint)
-        note.items = [Item.from_dict(item_dict) for item_dict in d.get("items", [])]
+        items = d.get("items", [])
+        if not isinstance(items, list):
+            log.warning("Ignored the invalid Note.items value %r", items)
+            items = []
+        note.items = [Item.from_dict(item) for item in items if isinstance(item, dict)]
         return note
 
 
@@ -144,6 +233,7 @@ class Settings:
         language: UI language code: "zh" or "en".
         theme: "auto" (follow Windows), "light" or "dark".
         text_scale: Note text size; one of ``theme.TEXT_SCALES``.
+        extra: Keys this version does not know, written back unchanged.
     """
 
     autostart: bool = True
@@ -152,8 +242,14 @@ class Settings:
     language: str = "zh"
     theme: str = "auto"
     text_scale: float = 1.0
+    extra: dict = field(default_factory=dict, repr=False, compare=False)
+
+    def to_dict(self) -> dict:
+        """Returns the settings as a JSON-serialisable dict."""
+        return _to_dict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Settings":
-        """Builds settings from a serialised dict, ignoring unknown keys."""
-        return cls(**{k: d[k] for k in cls.__dataclass_fields__ if k in d})
+        """Builds settings from a serialised dict, keeping unknown keys in ``extra``."""
+        known, extra = _split(cls, d)
+        return cls(**known, extra=extra)

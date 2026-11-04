@@ -69,6 +69,13 @@ _STRINGS: dict[str, tuple[str, str]] = {
     "item.overdue": (" · 已超时", " · Overdue"),
     "reminder.heading": ("提醒事项", "Reminder"),
     "reminder.fallback": ("提醒", "Reminder"),
+    # Data folder problems, shown as tray messages.
+    "data.restored": ("无法读取记事板，已从备份恢复。原文件保留为 {names}。",
+                      "Your notes could not be read and were restored from the backup. The file was kept as {names}."),
+    "data.unreadable": ("无法读取记事板。文件已保留在数据文件夹中：{names}。",
+                        "Your notes could not be read. The files were kept in the data folder: {names}."),
+    "data.save_failed": ("无法保存记事板，将继续重试：{error}",
+                         "Your notes cannot be saved; retrying: {error}"),
     # Date and time.
     "date.today": ("今天 {hm}", "Today {hm}"),
     "date.tomorrow": ("明天 {hm}", "Tomorrow {hm}"),

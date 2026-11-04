@@ -36,8 +36,8 @@ stay exactly where you left them.
   deletes items, so an agent can turn your email or calendar into to-dos and reminders.
 - **Settings**: theme (light, dark or match Windows), language (English or Simplified Chinese),
   text size for all notes, and start at login.
-- **Automatic saving**: changes are saved as you type, and the previous version is kept as a
-  backup.
+- **Automatic saving**: changes are saved as you type, with a backup of the previous version and
+  one copy per day for the last week. If saving keeps failing, the tray icon tells you.
 - **Updates**: check for a new version in the About window and install it with one click; notes
   and settings are kept. A pre-release is also offered newer pre-releases. When run from source,
   the release page opens instead.
@@ -135,9 +135,14 @@ prints one JSON object, `{"ok": true, ...}` or `{"ok": false, "error": "..."}`, 
 ## Data
 
 Notes and settings are stored in `notes.json` in `%APPDATA%\DesktopNote\`, with the previous
-version kept as `notes.json.bak`. To move your notes to another computer, copy this folder.
-Warnings and errors, if any, are logged to `desktopnote.log` in the same folder, and
-`DesktopNote.ico` is the icon on DesktopNote's notifications. Updates do not change this folder.
+version kept as `notes.json.bak` and the first version of each of the last seven days in
+`backups\`. To go back to one of them, quit DesktopNote and copy it over `notes.json`. To move your
+notes to another computer, copy this folder.
+
+A file that cannot be read is never overwritten: it is renamed to `notes-unreadable-<time>.json`,
+the notes come from the backup if possible, and the tray icon says so. Warnings and errors, if
+any, are logged to `desktopnote.log`, and `DesktopNote.ico` is the icon on DesktopNote's
+notifications.
 
 DesktopNote connects to the internet only when you click **Check for Updates**: it asks GitHub
 for the latest release and, if you install it, downloads it from there.

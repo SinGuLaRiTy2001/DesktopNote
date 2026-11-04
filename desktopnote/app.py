@@ -28,6 +28,8 @@ from .widgets import GlassToolTip, SegmentedControl, TextSizeSlider, default_due
 log = logging.getLogger(__name__)
 
 SAVE_DELAY_MS = 400
+SAVE_RETRY_MS = 5_000  # After a failed save.
+SAVE_WARN_AFTER = 3  # Failed saves in a row before the tray says so.
 LABEL_CHARS = 32  # Tray-list entries are cut to this many characters.
 LOG_FILE = "desktopnote.log"  # In the data folder; only warnings and errors are written.
 LOG_BYTES = 256 * 1024  # The log is rotated at this size, keeping one older file.
@@ -86,7 +88,12 @@ class DesktopNoteApp:
     def __init__(self, qapp: QApplication):
         self.qapp = qapp
         self.store = Store()
-        self.store.load()
+        try:
+            with self.store.locked():
+                self.store.load()
+        except OSError as exc:  # The lock could not be taken.
+            log.warning("data folder lock: %s", exc)
+            self.store.load()
         settings = self.store.settings
         settings.text_scale = nearest_text_scale(settings.text_scale)  # The steps may have changed since it was saved.
         self.windows: dict[str, NoteWindow] = {}
@@ -100,8 +107,9 @@ class DesktopNoteApp:
         self._scale_timer = QTimer(singleShot=True, interval=0)
         self._scale_timer.timeout.connect(self._apply_wanted_scale)
 
-        self.save_timer = QTimer(singleShot=True, interval=SAVE_DELAY_MS)
+        self.save_timer = QTimer(singleShot=True)
         self.save_timer.timeout.connect(self.save_now)
+        self._save_failures = 0
 
         self.reminder_timer = QTimer(interval=20_000)
         self.reminder_timer.timeout.connect(self.check_reminders)
@@ -130,7 +138,7 @@ class DesktopNoteApp:
         """Opens a window for every note and starts the reminder checks.
 
         On the first run it also registers autostart and adds a welcome note when there are no
-        notes yet.
+        notes yet. It then reports data files that could not be read.
         """
         settings = self.store.settings
         if settings.first_run:
@@ -154,6 +162,15 @@ class DesktopNoteApp:
             self._open_window(note)
         self.check_reminders()
         self.reminder_timer.start()
+        self._report_unreadable()
+
+    def _report_unreadable(self) -> None:
+        """Tells the user, from the tray, about data files that could not be read."""
+        names = ", ".join(path.name for path in self.store.set_aside)
+        if self.store.from_backup:
+            self._tray_message("DesktopNote", tr("data.restored", names=names))
+        elif names:
+            self._tray_message("DesktopNote", tr("data.unreadable", names=names))
 
     def _welcome_note(self) -> Note:
         """Builds the note shown on the first run, near the top right of the primary screen."""
@@ -409,15 +426,25 @@ class DesktopNoteApp:
 
     def schedule_save(self) -> None:
         """Saves after SAVE_DELAY_MS, restarting the delay on every call."""
-        self.save_timer.start()
+        self.save_timer.start(SAVE_DELAY_MS)
 
     def save_now(self) -> None:
-        """Saves immediately, cancelling any pending delayed save; failures are logged."""
+        """Saves immediately, cancelling any pending delayed save.
+
+        A failed save is logged and retried after SAVE_RETRY_MS; after SAVE_WARN_AFTER failures in
+        a row, a tray message says so.
+        """
         self.save_timer.stop()
         try:
             self.store.save()
         except OSError as exc:
             log.error("Saving failed: %s", exc)
+            self._save_failures += 1
+            if self._save_failures == SAVE_WARN_AFTER:
+                self._tray_message("DesktopNote", tr("data.save_failed", error=exc))
+            self.save_timer.start(SAVE_RETRY_MS)
+        else:
+            self._save_failures = 0
 
     # --- Reminders -----------------------------------------------------------
 

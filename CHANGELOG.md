@@ -5,10 +5,19 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- A notes file that cannot be read is kept as `notes-unreadable-<time>.json` instead of being
+  replaced, the notes come from the backup if possible, and the tray icon says so.
+- One copy of the notes per day is kept for the last week, in the data folder's `backups`.
+- The tray icon says so when the notes cannot be saved; saving is retried.
+
 ### Fixed
 
 - Reminders whose text contains quotation marks such as ’ or ‘’ showed no notification.
 - Text in a reminder could run as a command when its notification was shown.
+- A notes file with unexpected content could keep DesktopNote from starting, and values a newer
+  version added were lost on saving.
 
 ## [1.0.0rc4] - 2026-11-03
 
