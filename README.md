@@ -38,7 +38,8 @@ line lets scripts and AI agents add to your notes too.
   monitor edges.
 - Edge docking: push a note into the left, right or top edge of any monitor to tuck it away; it
   slides out when the cursor reaches it.
-- Multi-monitor aware: notes keep their size when moved between monitors with different display
+- Mixed-DPI multi-monitor support: move notes between monitors with different Windows display
+  scaling, and they keep their size. Tested with three monitors at 100%, 150% and 125% display
   scaling.
 - A system tray menu to create notes, bring them all to the front, jump to a note by name and
   change settings.
@@ -50,8 +51,8 @@ line lets scripts and AI agents add to your notes too.
   AI agents.
 - Automatic saving as you type, with a backup of the previous version and a daily copy for the last
   week.
-- Update checks on request, with one-click installation; the installed version is put back if an
-  update does not complete.
+- Update checks on request, with one-click installation and journaled recovery for interrupted
+  updates.
 
 ## Architecture
 
@@ -71,7 +72,7 @@ flowchart LR
     Storage[("Storage: notes.json, backups, lock")]
     Windows["Windows integration: glass, notifications, autostart"]
     Releases["GitHub Releases"]
-    Script["Update script"]
+    Script["Journaled update script"]
 
     UI <--> Controller
     Controller --> Commands
@@ -83,21 +84,25 @@ flowchart LR
     UI --> Windows
     Updater -- "HTTPS, on request" --> Releases
     Updater --> Script
-    Script -- "swaps the app files and restarts" --> GUI
+    Script -- "installs or rolls back the update, then restarts" --> GUI
 ```
 
 - **Desktop application.** The application controller owns the note windows, the tray menu,
   reminders and the app's lifecycle. Only one instance runs per user; a second launch brings the
   running app's notes to the front.
-- **Model and storage.** Notes and their items are plain data objects. The storage layer saves them
-  as JSON, keeps backups, and holds a lock on the data folder while it reads or writes, so only one
-  process changes the notes at a time.
+- **Model and storage.** Notes and their items are plain data objects. The storage layer persists
+  them as JSON and keeps backups. A data-folder lock coordinates access to the data file: the app
+  holds it while it loads the notes at startup, and an offline command-line call holds it while it
+  reads and saves them. While the app runs, commands reach it through local IPC instead.
 - **Command line.** `desktopnote-cli` and the app share one set of note commands. While the app
   runs, the command line sends each command to it over local inter-process communication, so the
   change shows at once; otherwise it changes the data file directly, under the same lock.
-- **Updates.** The updater finds a newer release on GitHub, checks the download against its
-  published SHA-256 checksum, and hands over to a script that replaces the app files once the app
-  has quit.
+- **Updates.** The updater finds a newer release on GitHub, verifies the download against its
+  published SHA-256 checksum, and installs it as a journaled update transaction. Once the app has
+  quit, a script replaces the app files, recording each step in a journal, and keeps the replaced
+  files until the new version confirms that it has started; otherwise it restores them. An
+  interrupted update is rolled back at the next login or start, or finished if the new version
+  had already started.
 - **Windows integration.** Glass effects, keep-on-top, notifications and autostart use Windows
   APIs; these parts are Windows-only.
 
@@ -159,9 +164,10 @@ desktopnote-cli delete <item id>                                 # delete one it
 ```
 
 The other commands are `list` (every note with its items), `new-note [--title ...]` and
-`done <item id>`; `desktopnote-cli --help` describes them all. A note is named by its id or title.
-Every command prints one JSON object, `{"ok": true, ...}` or `{"ok": false, "error": "..."}`, and
-exits with 0 on success, 1 on an error or 2 for invalid arguments. While DesktopNote runs, changes
+`done <item id>`. A note is named by its id or title. Commands return a JSON object indicating
+success or failure, `{"ok": true, ...}` or `{"ok": false, "error": "..."}`, and exit with 0 on
+success or 1 on an error; invalid arguments print a usage message and exit with 2. Run
+`desktopnote-cli --help` for the full command reference. While DesktopNote runs, changes
 appear at once; otherwise they are saved for the next start.
 
 ## Data and privacy
@@ -176,9 +182,10 @@ A notes file that cannot be read is never overwritten: it is kept as
 `notes-unreadable-<time>.json`, the notes are restored from the backup if possible, and the tray
 icon tells you. Warnings and errors are logged to `desktopnote.log` in the same folder.
 
-DesktopNote connects to the internet only when you click **Check for Updates**: it asks GitHub for
-the latest release and, if you install it, downloads it from there. Notes never leave your
-computer.
+DesktopNote itself does not upload or sync your notes. It connects to the internet only when you
+click **Check for Updates**: it asks GitHub for the latest release and, if you install it,
+downloads it from there. Scripts or AI agents that you give access through the command line may
+handle note data according to their own behavior.
 
 ## Development
 
