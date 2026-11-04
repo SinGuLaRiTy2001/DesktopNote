@@ -9,6 +9,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - A note let go while snapped to a note tucked away at an edge tucks away at that edge too.
 
+### Fixed
+
+- A note being edited tucked away as soon as it was let go at an edge; it now stays out until
+  editing ends.
+
 ## [1.0.0rc5] - 2026-11-04
 
 ### Changed

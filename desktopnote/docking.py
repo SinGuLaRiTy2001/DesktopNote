@@ -327,8 +327,10 @@ class EdgeDock(QObject):
     def drag_finished(self, moved: bool, stuck: list[Stick], edge: str) -> None:
         """Docks, keeps or undocks the note after a move or resize.
 
-        Let go where it hides (edge), the note docks there and slides in at once. A docked note
-        moved along its edge or resized stays docked; moved anywhere else, it undocks.
+        Let go where it hides (edge), the note docks there and slides in at once; while it is
+        being edited, it stays out as live glass until editing has ended and the cursor has left.
+        A docked note moved along its edge or resized stays docked; moved anywhere else, it
+        undocks.
 
         Args:
             moved: Whether the note was moved, not only resized.
@@ -341,6 +343,12 @@ class EdgeDock(QObject):
         revealed = self._dock_to(geo, edge) if edge else None
         if revealed is not None:
             self._place(revealed)
+            if self._window.editing:
+                self.shown = True
+                self._away.invalidate()
+                self._fade_to(1.0, self._show_glass)
+                self._window.changed.emit()
+                return
             self.shown = False
             self._wait_for_leave = True
             self._hold.invalidate()

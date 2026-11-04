@@ -9,6 +9,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from desktopnote.models import Note  # noqa: E402
@@ -56,6 +57,29 @@ class HideEdgeTest(unittest.TestCase):
         push = Stick("left", (0, 0, 100, 100), (0, 0, 100, 100))
         with mock.patch.object(self.win._snap_move, "pushed", return_value=push):
             self.assertEqual(self.win._hide_edge(), "left")
+
+
+class DockWhileEditingTest(unittest.TestCase):
+    """A note let go at an edge docks; while it is being edited, it stays out."""
+
+    def setUp(self):
+        self.win = NoteWindow(Note(x=200, y=200, w=280, h=220), LIGHT, 60, 1.0)
+        self.win.show()
+        QTest.qWait(50)
+        self.addCleanup(self.win.deleteLater)
+        self.addCleanup(self.win.close)
+
+    def test_docks_and_slides_in(self):
+        self.win.dock.drag_finished(True, [], "right")
+        self.assertEqual(self.win.dock.edge, "right")
+        self.assertFalse(self.win.dock.shown)
+
+    def test_stays_out_while_editing(self):
+        self.win.set_editing(True)
+        self.win.dock.drag_finished(True, [], "right")
+        self.assertEqual(self.win.dock.edge, "right")
+        self.assertTrue(self.win.dock.shown)
+        self.assertFalse(self.win.dock.is_hidden())
 
 
 if __name__ == "__main__":
