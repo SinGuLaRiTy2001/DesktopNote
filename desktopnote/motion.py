@@ -38,12 +38,15 @@ STAND_IN_SCALE = 8  # The acrylic stand-in is computed this many times smaller t
 FRAME_MS = 16
 
 
-class Tween(QObject):
+class Tween:
     """Eased 0 -> 1 progress, ticked once per frame.
 
     Unlike QVariantAnimation, which is driven by the wall clock, a hitch only delays the tween:
     each tick advances by at most two frames. A window's first show can stall the GUI thread for
     about 50 ms, which would otherwise swallow the first third of a short transition.
+
+    While it runs, a tween holds a timer that is a child of its parent, and it stops when the
+    parent is deleted; a finished or stopped tween holds no timer.
 
     Attributes:
         duration: Length of the transition in milliseconds; may be changed between runs.
@@ -53,37 +56,59 @@ class Tween(QObject):
         progress: Linear progress, 0..1.
     """
 
+    _running: set["Tween"] = set()  # Keeps running tweens alive.
+
     def __init__(self, parent: QObject, duration: int, on_value, on_done=None, easing=EASE_OUT):
-        super().__init__(parent)
         self.duration, self.on_value, self.on_done = duration, on_value, on_done
         self.curve = QEasingCurve(easing)
         self.progress = 0.0
+        self._parent = parent
         self._clock = QElapsedTimer()
         self._last = 0
-        self._timer = QTimer(self)
-        self._timer.setTimerType(Qt.PreciseTimer)
-        self._timer.setInterval(FRAME_MS)
-        self._timer.timeout.connect(self._tick)
+        self._timer: QTimer | None = None
+        self._first_paint: _FirstPaint | None = None
 
     def start(self) -> None:
         """Restarts the tween from 0, reporting the initial value immediately."""
+        self._release()
         self.progress = 0.0
         self._clock.start()
         self._last = 0
         self.on_value(self.curve.valueForProgress(0.0))
-        self._timer.start()
+        timer = QTimer(self._parent)
+        timer.setTimerType(Qt.PreciseTimer)
+        timer.setInterval(FRAME_MS)
+        timer.timeout.connect(self._tick)
+        timer.destroyed.connect(lambda _=None: Tween._running.discard(self))
+        self._timer = timer
+        Tween._running.add(self)
+        timer.start()
 
     def start_after_first_paint(self, w: QWidget) -> None:
-        """Starts the tween once w has painted (and flushed) its first frame."""
-        _FirstPaint(w, self)
+        """Starts the tween once w has painted (and flushed) its first frame, unless stopped first."""
+        self._first_paint = _FirstPaint(w, self)
 
     def stop(self) -> None:
         """Stops the tween where it is, without calling on_done."""
-        self._timer.stop()
+        if self._first_paint is not None:
+            self._first_paint.cancel()
+            self._first_paint = None
+        self._release()
 
     def is_running(self) -> bool:
         """Returns whether the tween is still ticking."""
-        return self._timer.isActive()
+        return self._timer is not None
+
+    def _release(self) -> None:
+        """Stops and deletes the timer."""
+        timer, self._timer = self._timer, None
+        Tween._running.discard(self)
+        if timer is not None:
+            try:
+                timer.stop()
+                timer.deleteLater()
+            except RuntimeError:  # Deleted with the parent.
+                pass
 
     def _tick(self) -> None:
         now = self._clock.elapsed()
@@ -91,8 +116,8 @@ class Tween(QObject):
         self._last = now
         self.progress = min(1.0, self.progress + dt / self.duration)
         self.on_value(self.curve.valueForProgress(self.progress))
-        if self.progress >= 1.0:
-            self._timer.stop()
+        if self.progress >= 1.0 and self._timer is not None:
+            self._release()
             if self.on_done is not None:
                 self.on_done()
 
@@ -177,15 +202,28 @@ class _FirstPaint(QObject):
     """One-shot event filter that starts a tween after the widget's first paint."""
 
     def __init__(self, w: QWidget, tween: Tween):
-        super().__init__(tween)
-        self.tween = tween
+        super().__init__(w)
+        self.tween: Tween | None = tween
         w.installEventFilter(self)
+
+    def cancel(self) -> None:
+        """Keeps the tween from starting."""
+        self.tween = None
+        self.deleteLater()
 
     def eventFilter(self, obj, ev):
         if ev.type() == QEvent.Paint:
             obj.removeEventFilter(self)
-            QTimer.singleShot(0, self.tween.start)  # Deferred until this paint has reached the screen.
+            QTimer.singleShot(0, self, self._start)  # Deferred until this paint has reached the screen.
         return False
+
+    def _start(self) -> None:
+        """Starts the tween unless it was cancelled, then deletes this filter."""
+        tween, self.tween = self.tween, None
+        if tween is not None:
+            tween._first_paint = None
+            tween.start()
+        self.deleteLater()
 
 
 # --- Snapshots ---------------------------------------------------------------
@@ -323,7 +361,6 @@ def stop(w: QWidget) -> None:
     w._pop_tween = None
     if tween is not None:
         tween.stop()
-        tween.deleteLater()
 
 
 def expand_in(w: QWidget, duration: int = ITEM_IN_MS, on_done=None) -> None:

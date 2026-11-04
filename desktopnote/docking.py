@@ -31,7 +31,9 @@ HOLD_MS = 3000  # How long a note revealed from the tray stays out if the cursor
 SLIDE_MS = 320  # Slide out.
 SLIDE_IN_MS = 240  # Slide back.
 SLIDE_EASING = QEasingCurve.OutCubic
-POLL_MS = 16  # Cursor checks while docked.
+POLL_MS = 16  # Cursor checks while the cursor is near a docked note, or it is slid out.
+POLL_FAR_MS = 100  # Cursor checks while the cursor is farther away than NEAR.
+NEAR = 400  # Px from a hidden note's strip within which the cursor is checked every POLL_MS.
 
 
 def revealed_rect(rect: QRect, area: QRect, edge: str) -> QRect:
@@ -472,6 +474,7 @@ class EdgeDock(QObject):
             self._hold.start()
         if not self.shown:
             self.shown = True
+            self._poll.setInterval(POLL_MS)
             self._away.invalidate()
             win_effects.set_click_through(self._hwnd(), False)
             self._frost_fresh()
@@ -530,14 +533,23 @@ class EdgeDock(QObject):
         return self._hold.isValid() and self._hold.elapsed() < HOLD_MS
 
     def _check_cursor(self) -> None:
-        """Slides the note out or back as the cursor comes to it or leaves it."""
+        """Slides the note out or back as the cursor comes to it or leaves it.
+
+        Checks come every POLL_MS while the note is out or the cursor is within NEAR of its
+        strip, and every POLL_FAR_MS otherwise.
+        """
         if self._dragging or not self._window.isVisible():
             return
         cursor = QCursor.pos()
         if not self.shown:
+            zone = reveal_zone(self._revealed(), self._area, self.edge)
+            near = zone.adjusted(-NEAR, -NEAR, NEAR, NEAR).contains(cursor) or self._resting.isValid()
+            self._poll.setInterval(POLL_MS if near else POLL_FAR_MS)
+            if not near:
+                self._wait_for_leave = False
+                return
             screen = QGuiApplication.screenAt(cursor)
             on_screen = screen is not None and screen.name() == self._screen_name
-            zone = reveal_zone(self._revealed(), self._area, self.edge)
             if zone.adjusted(-APPROACH, -APPROACH, APPROACH, APPROACH).contains(cursor):
                 self._frost_fresh()
             if not (on_screen and zone.contains(cursor)):

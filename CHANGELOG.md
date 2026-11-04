@@ -11,11 +11,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
   replaced, the notes come from the backup if possible, and the tray icon says so.
 - One copy of the notes per day is kept for the last week, in the data folder's `backups`.
 - The tray icon says so when the notes cannot be saved; saving is retried.
+- Notes tucked away at an edge use far less power while the cursor is elsewhere.
 
 ### Fixed
 
 - Reminders whose text contains quotation marks such as ’ or ‘’ showed no notification.
 - Text in a reminder could run as a command when its notification was shown.
+- Memory use grew while hovering over notes and with each opening of a note's menu.
 - A notes file with unexpected content could keep DesktopNote from starting, and values a newer
   version added were lost on saving.
 

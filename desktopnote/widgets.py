@@ -1257,6 +1257,7 @@ class MiniCalendar(QWidget):
         self.month = selected.replace(day=1)
         self.hover: date | None = None
         self._hover_level = 1.0
+        self._hover_tween = motion.Tween(self, motion.HoverFx.IN_MS, self._set_hover_level)
         self._slide: tuple[QPixmap, int] | None = None  # (Outgoing month image, direction).
         self._slide_t = 0.0
         self._slide_tween: motion.Tween | None = None
@@ -1369,7 +1370,7 @@ class MiniCalendar(QWidget):
             self.hover = day
             self.setCursor(Qt.PointingHandCursor if day else Qt.ArrowCursor)
             if day is not None:  # The hover circle fades in on each new day.
-                motion.Tween(self, motion.HoverFx.IN_MS, self._set_hover_level).start()
+                self._hover_tween.start()
             self.update()
 
     def _set_hover_level(self, v: float) -> None:
@@ -2456,6 +2457,7 @@ class TagPicker(QWidget):
         self.keys = [*TAGS, self.CUSTOM]
         self.hover: int | None = None
         self._level = 0.0
+        self._hover_tween = motion.Tween(self, motion.HoverFx.IN_MS, self._set_level)
         self.setMouseTracking(True)
         self.setCursor(Qt.PointingHandCursor)
         count = len(self.keys)
@@ -2476,8 +2478,8 @@ class TagPicker(QWidget):
         i = self._index_at(e.position())
         if i != self.hover:
             self.hover = i
-            if i is not None:
-                motion.Tween(self, motion.HoverFx.IN_MS, self._set_level).start()
+            if i is not None:  # The hover ring fades in on each new dot.
+                self._hover_tween.start()
             self.update()
 
     def _set_level(self, v: float) -> None:

@@ -895,6 +895,7 @@ class NoteWindow(GlassWindow):
         """Opens the note menu (tag colours, new note, pin, delete) above the More button."""
         theme = self.theme
         menu = glass_menu(theme, self)
+        menu.aboutToHide.connect(menu.deleteLater)
         tags = TagPicker(theme, self.note.tint)
         tags.picked.connect(
             lambda key: (menu.close(), self._pick_custom() if key == TagPicker.CUSTOM else self.set_tint(key)))
