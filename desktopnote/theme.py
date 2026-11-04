@@ -337,7 +337,7 @@ def note_qss(t: Theme) -> str:
         placeholder-text-color: {t.secondary}; }}
     QTextEdit[dim="true"] {{ color: {t.secondary}; }}  /* Done to-dos and reminders. */
     QLineEdit#title {{
-        border: none; background: transparent; color: {t.text}; padding: 3px 0 1px 6px;
+        border: none; background: transparent; color: {t.text}; padding: 3px 0 5px 6px;
         selection-background-color: {t.accent_fill}; selection-color: white; placeholder-text-color: {t.secondary};
     }}
     QToolButton {{ border: none; border-radius: {CONTROL_RADIUS}px; padding: 4px; background: transparent; }}

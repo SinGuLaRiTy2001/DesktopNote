@@ -9,6 +9,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - A note let go while snapped to a note tucked away at an edge tucks away at that edge too.
 
+### Changed
+
+- More space between a note's title and its items.
+
 ### Fixed
 
 - A note being edited tucked away as soon as it was let go at an edge; it now stays out until
