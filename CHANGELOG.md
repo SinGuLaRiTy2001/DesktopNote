@@ -12,6 +12,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - One copy of the notes per day is kept for the last week, in the data folder's `backups`.
 - The tray icon says so when the notes cannot be saved; saving is retried.
 - If an updated version does not start, the installed version comes back.
+- An update cut short, for example by a power cut, is undone at the next login or start of
+  DesktopNote, or finished if the new version had already started.
 - On the first start, the language follows Windows.
 - Notes tucked away at an edge use far less power while the cursor is elsewhere.
 

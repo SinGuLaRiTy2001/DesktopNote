@@ -39,7 +39,8 @@ stay exactly where you left them.
 - **Automatic saving**: changes are saved as you type, with a backup of the previous version and
   one copy per day for the last week. If saving keeps failing, the tray icon tells you.
 - **Updates**: check for a new version in the About window and install it with one click; notes
-  and settings are kept. If the new version does not start, the installed one comes back. A
+  and settings are kept. If the new version does not start, the installed one comes back; an
+  update cut short, for example by a power cut, is undone at the next login or start. A
   pre-release is also offered newer pre-releases. When run from source, the release page opens
   instead.
 

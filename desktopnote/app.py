@@ -25,7 +25,7 @@ from .note_window import GlassMenu, NoteWindow, glass_menu
 from .popups import GlassToolTip
 from .storage import Store, data_dir
 from .theme import DARK, FONT_FAMILIES, LIGHT, Theme, menu_qss, nearest_text_scale, tag_color
-from .updates import UpdateFlow, confirm_started
+from .updates import UpdateFlow, confirm_started, ready_to_start
 
 log = logging.getLogger(__name__)
 
@@ -811,6 +811,8 @@ def main() -> int:
     if not claim(SERVER_NAME):  # Before any window code: a second launch hands over quickly.
         return 0
     _setup_logging()
+    if not ready_to_start():  # An update is being installed, or one cut short is being undone.
+        return 0
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     qapp = QApplication(sys.argv)
     qapp.setApplicationName("DesktopNote")

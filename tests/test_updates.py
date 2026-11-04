@@ -1,11 +1,8 @@
 """Update tests: picking the release, checking the download, and backing up the notes.
 
-The installing itself (swapping the app files with the PowerShell script) needs a release build
-and is checked by hand; see docs/RELEASING.md.
+Swapping the app files, and recovering a swap cut short, is tested in test_update_recovery.py.
 """
 import hashlib
-import os
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -78,25 +75,6 @@ class InstallTest(unittest.TestCase):
         self.assertEqual((data / "notes.json").read_text(encoding="utf-8"), '{"notes": []}')
         self.assertIsNone(updates.backup_notes(Path(tempfile.mkdtemp())), "no notes, no backup")
 
-    def test_the_script_quotes_paths(self):
-        script = updates.install_script(Path("C:/Users/O'Neil/DesktopNote"), Path("C:/T/new"), Path("C:/T"), 1234,
-                                        ["DesktopNote.exe", "_internal"], Path("C:/Users/O'Neil/AppData"), "9.9.9")
-        self.assertIn("'C:\\Users\\O''Neil\\DesktopNote'", script.replace("/", "\\"))
-        self.assertIn("Wait-Process -Id 1234", script)
-        self.assertIn("'DesktopNote.exe', '_internal'", script, "the old release's files are replaced too")
-
-    @unittest.skipUnless(sys.platform == "win32", "PowerShell is Windows-only")
-    def test_paths_with_any_quote_stay_one_string(self):
-        probe = ("[Console]::OutputEncoding=[Text.Encoding]::UTF8;$e=$null;$t=$null;"
-                 "$a=[System.Management.Automation.Language.Parser]::ParseInput($env:SCRIPT,[ref]$t,[ref]$e);"
-                 "$e.Count;$a.EndBlock.Statements[0].Right.Expression.Value")
-        for folder in ("O'Neil", "O’Neil", "‘x’", "a‚b‛c", "x’; Write-Output INJECTED; ‘"):
-            with self.subTest(folder=folder):
-                done = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", probe],
-                                      capture_output=True, encoding="utf-8", check=True,
-                                      env={**os.environ, "SCRIPT": f"$app = {updates._ps(folder)}"})
-                self.assertEqual(done.stdout.splitlines(), ["0", folder])
-
     def test_the_installed_release_files(self):
         app = Path(tempfile.mkdtemp())
         for name in ("DesktopNote.exe", "my-file.txt", "_internal"):
@@ -131,79 +109,17 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in data.iterdir()), ["notes.json"], "no backup, no log")
         self.assertEqual(list(app.iterdir()), [], "the app folder is untouched")
 
-
-@unittest.skipUnless(sys.platform == "win32", "the install script is PowerShell")
-class InstallScriptTest(unittest.TestCase):
-    """The script swaps the files, and puts the old ones back when the new version fails."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        root = Path(self._tmp.name)
-        self.app, self.data, self.staging = root / "DesktopNote", root / "data", root / "DesktopNote" / updates.STAGING
-        self.new = self.staging / "unpacked" / "DesktopNote"
-        for folder in (self.app / "_internal", self.data, self.new / "_internal"):
-            folder.mkdir(parents=True)
-        (self.app / "_internal" / "version.txt").write_text("old")
-        (self.new / "_internal" / "version.txt").write_text("new")
-        (self.app / "my-file.txt").write_text("mine")
-        (self.data / "notes.json").write_text("{}")
-        (self.data / updates.NOTES_BACKUP).write_text("{}")
-        self.started = self.data / "started.txt"
-        self.launcher(self.app, "old", confirms=False)
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def launcher(self, folder: Path, name: str, confirms: bool) -> None:
-        """Writes a stand-in for DesktopNote.exe that notes its start and maybe confirms it."""
-        lines = [f'@echo {name}>> "{self.started}"']
-        if confirms:
-            lines.append(f'@del "%~dp0{updates.OLD}\\{updates.PENDING}"')
-        (folder / "DesktopNote.cmd").write_text("\n".join(lines) + "\n")
-
-    def run_script(self) -> None:
-        """Runs the install script, as for an app process that has already quit."""
-        gone = subprocess.Popen([sys.executable, "-c", "pass"])
-        gone.wait()
-        script = self.staging / "install.ps1"
-        script.write_text(updates.install_script(self.app, self.new, self.staging, gone.pid,
-                                                 ["DesktopNote.cmd", "_internal"], self.data, "9.9.9",
-                                                 exe="DesktopNote.cmd", started_s=3), encoding="utf-8-sig")
-        subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
-                        str(script)], check=True, timeout=60)
-
-    def starts(self, count: int) -> list[str]:
-        for _ in range(100):  # The last start is not waited for.
-            if self.started.exists() and len(self.started.read_text().split()) >= count:
-                break
-            QTest.qWait(50)
-        return self.started.read_text().split() if self.started.exists() else []
-
-    def test_a_new_version_that_starts_replaces_the_old_one(self):
-        self.launcher(self.new, "new", confirms=True)
-        self.run_script()
-        self.assertEqual(self.starts(1), ["new"])
-        self.assertEqual((self.app / "_internal" / "version.txt").read_text(), "new")
-        self.assertEqual(sorted(p.name for p in self.app.iterdir()), ["DesktopNote.cmd", "_internal", "my-file.txt"])
-        self.assertFalse((self.data / updates.NOTES_BACKUP).exists())
-
-    def test_a_new_version_that_does_not_start_is_rolled_back(self):
-        self.launcher(self.new, "new", confirms=False)
-        self.run_script()
-        self.assertEqual(self.starts(2), ["new", "old"])
-        self.assertEqual((self.app / "_internal" / "version.txt").read_text(), "old")
-        self.assertEqual(sorted(p.name for p in self.app.iterdir()), ["DesktopNote.cmd", "_internal", "my-file.txt"])
-        self.assertTrue((self.data / updates.NOTES_BACKUP).exists(), "kept for the user")
-        self.assertIn("did not start", (self.data / "desktopnote.log").read_text(encoding="utf-8-sig"))
-
-    def test_a_failed_swap_keeps_the_old_version(self):
-        self.launcher(self.new, "new", confirms=True)
-        with open(self.app / "_internal" / "version.txt", "rb"):  # Open: the folder cannot be moved.
-            self.run_script()
-        self.assertEqual(self.starts(1), ["old"])
-        self.assertEqual((self.app / "_internal" / "version.txt").read_text(), "old")
-        self.assertEqual(sorted(p.name for p in self.app.iterdir()), ["DesktopNote.cmd", "_internal", "my-file.txt"])
-        self.assertIn("installed version stays", (self.data / "desktopnote.log").read_text(encoding="utf-8-sig"))
+    def test_an_unfinished_update_blocks_a_new_one(self):
+        app, data = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
+        (app / updates.TRANSACTION).mkdir()
+        (app / updates.TRANSACTION / updates.JOURNAL).write_text('{"state": "moving"}', encoding="utf-8")
+        updater = updates.Updater()
+        updater._app, updater._data, updater._pid = app, data, 0
+        updater._release = updates.Release("9.9.9", "", "", "")
+        journal = app / updates.TRANSACTION / updates.JOURNAL
+        with self.assertRaisesRegex(OSError, "not finished"):
+            updater._install(b"")
+        self.assertEqual(journal.read_text(encoding="utf-8"), '{"state": "moving"}', "the earlier update is kept")
 
 
 class TimeoutTest(unittest.TestCase):

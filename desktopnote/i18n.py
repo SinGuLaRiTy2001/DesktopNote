@@ -28,6 +28,18 @@ _STRINGS: dict[str, tuple[str, str]] = {
     "update.download": ("下载 {version}", "Download {version}"),
     "update.installing": ("正在更新…", "Updating…"),
     "update.retry": ("重试", "Try Again"),  # After a failed check or update; the tooltip says why.
+    "update.unfinished": ("DesktopNote 未能撤销一次中断的更新：{problem}。\n\n请关闭正在使用 {folder} 中文件的程序，"
+                          "然后重新启动 DesktopNote。如果仍然出现此提示，请从发布页面重新下载 DesktopNote。"
+                          "记事板不受影响。",
+                          "DesktopNote could not finish undoing an interrupted update: {problem}.\n\nClose any "
+                          "program that uses files in {folder}, then start DesktopNote again. If this keeps "
+                          "happening, download DesktopNote again from its releases page. Your notes are not "
+                          "affected."),
+    "update.broken": ("DesktopNote 无法撤销一次中断的更新，因为 {folder} 中的更新文件不完整。\n\n请从发布页面重新下载 "
+                      "DesktopNote，并解压到此文件夹。记事板不受影响。",
+                      "DesktopNote cannot undo an interrupted update because the update files in {folder} are "
+                      "incomplete.\n\nDownload DesktopNote again from its releases page and extract it into this "
+                      "folder. Your notes are not affected."),
     # About window.
     "about.version": ("版本 {version}", "Version {version}"),
     "about.developer": ("由文简使用 Claude Code 开发", "Developed by Jian Wen with Claude Code"),

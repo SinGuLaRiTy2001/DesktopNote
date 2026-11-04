@@ -482,6 +482,12 @@ def show_toast(title: str, text: str) -> subprocess.Popen | None:
         return None
 
 
+def message_box(title: str, text: str) -> None:
+    """Shows a Windows message box with a warning icon and an OK button, until it is closed."""
+    if IS_WINDOWS:
+        ctypes.windll.user32.MessageBoxW(None, text, title, 0x30)  # MB_OK | MB_ICONWARNING
+
+
 def set_autostart(enabled: bool) -> None:
     """Adds or removes the DesktopNote entry under the current user's Run registry key.
 

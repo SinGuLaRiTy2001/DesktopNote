@@ -1,11 +1,14 @@
 """Checks GitHub for a newer release and installs it into the app folder.
 
-The release is downloaded, checked against its published SHA-256 and unpacked into the app
-folder (STAGING). Once the app has quit, a hidden PowerShell script replaces the files listed in
-the installed release's manifest (MANIFEST) with the new ones and starts the new version, which
-confirms with confirm_started(). If the swap fails, or the new version does not confirm within
-STARTED_S, the script puts the old files back and starts the old version. The notes in the data
-folder (storage.data_dir) are not changed.
+The release is downloaded, checked against its published SHA-256 and unpacked into the update
+folder (TRANSACTION) in the app folder. Once the app has quit, a hidden PowerShell script
+(UPDATE_SCRIPT) replaces the files listed in the installed release's manifest (MANIFEST) with
+the new ones and starts the new version, which confirms with confirm_started(). If the swap
+fails, or the new version does not confirm within STARTED_S, the script puts the old files back
+and starts the old version. A journal in the update folder records each step, so an update cut
+short (for example by a power cut) is undone, or finished if the new version had started, at
+the next login or the next start (ready_to_start). The notes in the data folder
+(storage.data_dir) are not changed.
 
 Only a release build (PyInstaller) installs updates; from source, the release page is opened.
 """
@@ -22,10 +25,12 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QCryptographicHash, QObject, QUrl, Signal
+from PySide6.QtCore import QByteArray, QCryptographicHash, QLocale, QObject, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
+from . import i18n, win_effects
+from .i18n import tr
 from .win_effects import CREATE_NO_WINDOW
 
 REPO = "SinGuLaRiTy2001/DesktopNote"
@@ -37,10 +42,13 @@ MANIFEST = "_internal/release-files.txt"  # A release's top-level files (scripts
 EARLY_RELEASE_FILES = ["DesktopNote.exe", "desktopnote-cli.exe", "_internal", "LICENSE", "THIRD_PARTY_NOTICES.md",
                        "licenses"]
 NOTES_BACKUP = "notes.before-update.json"  # Kept until the new version has started.
-STAGING = ".update-new"  # The unpacked release, in the app folder.
-OLD = ".update-old"  # The replaced files, in the app folder, until the new version has started.
-PENDING = "pending"  # In OLD while the new version has not confirmed that it started.
+TRANSACTION = ".update"  # In the app folder: the update in progress.
+# In TRANSACTION: the unpacked release, the replaced files, the journal, the marker the new version
+# deletes once it has started, the update script, and the lock the running script holds.
+NEW, OLD, JOURNAL, PENDING, SCRIPT, SCRIPT_LOCK = "new", "old", "journal.json", "pending", "update.ps1", "script.lock"
 STARTED_S = 60  # How long the new version has to confirm that it started.
+# Where the recovery runs at the next login while an update is not finished.
+RUN_ONCE = (r"HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce", "DesktopNoteUpdate")
 STAGES = {"a": 0, "b": 1, "rc": 2}  # Pre-release stages, before the final release.
 TIMEOUT_MS = 30_000  # A request stops when no data arrives for this long.
 _VERSION = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?$")
@@ -158,118 +166,312 @@ def backup_notes(data: Path) -> Path | None:
     return target
 
 
-_PS_QUOTES = "'‘’‚‛"  # The characters PowerShell reads as a single quote.
+# Swaps the files (-WaitPid <the app's process id>) or recovers an update cut short (-Recover);
+# everything else comes from the journal (see prepare). States: prepared, moving, installing,
+# installed, committed, rolling_back.
+UPDATE_SCRIPT = r"""param([int]$WaitPid = 0, [switch]$Recover)
+$ErrorActionPreference = 'Stop'
+$tx = $PSScriptRoot
+$app = Split-Path -Parent $tx
+$journalPath = Join-Path $tx 'journal.json'
+$pending = Join-Path $tx 'pending'
+$newDir = Join-Path $tx 'new'
+$oldDir = Join-Path $tx 'old'
 
+# One script at a time: the lock is held until this process ends.
+try { $guard = [IO.File]::Open((Join-Path $tx 'script.lock'), 'OpenOrCreate', 'ReadWrite', 'None') } catch { exit 0 }
 
-def _ps(text: str | Path) -> str:
-    """Quotes a value as a PowerShell string literal, doubling every kind of single quote in it."""
-    return "'" + "".join(c * 2 if c in _PS_QUOTES else c for c in str(text)) + "'"
+function Stop-Here($point) {  # Tests stop the script here, as a power cut would.
+    if ($env:DESKTOPNOTE_TEST_STOP_AT -eq $point) { [Environment]::Exit(99) }
+}
 
+function Read-Journal {
+    if (-not (Test-Path -LiteralPath $journalPath)) { return $null }
+    return [IO.File]::ReadAllText($journalPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
+}
 
-def install_script(app: Path, new: Path, staging: Path, pid: int, old_names: list[str], data: Path,
-                   version: str, exe: str = "DesktopNote.exe", started_s: int = STARTED_S) -> str:
-    """Returns the PowerShell script that swaps the app files once the app has quit.
+function Save-Journal($j) {  # Written to disk, then put in place in one step.
+    $tmp = "$journalPath.tmp"
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($j | ConvertTo-Json -Depth 4))
+    $fs = [IO.File]::Open($tmp, 'Create', 'Write', 'None')
+    try { $fs.Write($bytes, 0, $bytes.Length); $fs.Flush($true) } finally { $fs.Dispose() }
+    if (Test-Path -LiteralPath $journalPath) { [IO.File]::Replace($tmp, $journalPath, [NullString]::Value) }
+    else { [IO.File]::Move($tmp, $journalPath) }
+}
 
-    It moves the old release's files and the ones the new release replaces into OLD, moves the
-    new files in and starts the new version. Once that version confirms (it deletes PENDING), the
-    script removes OLD and the notes backup. If the swap fails, or there is no confirmation
-    within ``started_s``, it stops the new version, moves the old files back, notes the error in
-    desktopnote.log and starts the old version; the notes backup is kept. Either way it removes
-    the download.
+function Write-Log($j, $level, $text) {
+    $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss,fff') $level desktopnote.updates: $text"
+    try { Add-Content -LiteralPath (Join-Path $j.data 'desktopnote.log') -Value $line -Encoding utf8 } catch { }
+}
 
-    Args:
-        app: The app folder to update.
-        new: The unpacked release's app folder.
-        staging: The download's folder, removed in any case.
-        pid: The running app's process id, to wait for.
-        old_names: The installed release's top-level files (release_files()).
-        data: The data folder, holding the notes backup and desktopnote.log.
-        version: The new version, for the log.
-        exe: The executable to start afterwards.
-        started_s: How long the new version has to confirm that it started.
-    """
-    names = ", ".join(_ps(name) for name in old_names) or "@()"
-    return f"""$ErrorActionPreference = 'Stop'
-$app = {_ps(app)}; $new = {_ps(new)}; $old = Join-Path $app {_ps(OLD)}; $pending = Join-Path $old {_ps(PENDING)}
-$exe = Join-Path $app {_ps(exe)}
-$replace = @({names}) + @(Get-ChildItem -LiteralPath $new -Force | ForEach-Object {{ $_.Name }}) | Sort-Object -Unique
-$moved = @(); $added = @()
+function Move-Entry($from, $to) {  # A rename: the whole file or folder moves, or nothing does.
+    if (Test-Path -LiteralPath $from -PathType Container) { [IO.Directory]::Move($from, $to) }
+    else { [IO.File]::Move($from, $to) }
+}
 
-function Write-Log($text) {{
-    $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss,fff') WARNING desktopnote.updates: update to {version} failed, "
-    try {{ Add-Content -LiteralPath {_ps(data / "desktopnote.log")} -Value ($line + $text) -Encoding utf8 }} catch {{ }}
-}}
+function Start-App($j) {
+    try { return [Diagnostics.Process]::Start((Join-Path $app $j.exe)) } catch { return $null }
+}
 
-function Move-Entry($from, $to) {{  # A rename: the whole file or folder moves, or nothing does.
-    if (Test-Path -LiteralPath $from -PathType Container) {{ [IO.Directory]::Move($from, $to) }}
-    else {{ [IO.File]::Move($from, $to) }}
-}}
+function Set-Recovery($j) {  # Recovery at the next login, for as long as the transaction is open.
+    try {
+        if (-not (Test-Path -LiteralPath $j.run_once_key)) { [void](New-Item -Path $j.run_once_key -ErrorAction Stop) }
+        $command = $j.run_once_command
+        Set-ItemProperty -LiteralPath $j.run_once_key -Name $j.run_once_name -Value $command -ErrorAction Stop
+    } catch { }
+}
 
-function Restore-Old {{
+function Close-Transaction($j) {  # Removes the update folder, the journal last.
+    Remove-Item -LiteralPath $newDir -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $pending -Force -ErrorAction SilentlyContinue
-    foreach ($name in $script:added) {{
-        Remove-Item -LiteralPath (Join-Path $app $name) -Recurse -Force -ErrorAction SilentlyContinue
-    }}
-    foreach ($name in $script:moved) {{
-        try {{ Move-Entry (Join-Path $old $name) (Join-Path $app $name) }} catch {{ }}
-    }}
-    if ((Test-Path -LiteralPath $old) -and -not (Get-ChildItem -LiteralPath $old -Force)) {{
-        Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
-    }}
-}}
+    try { Remove-ItemProperty -LiteralPath $j.run_once_key -Name $j.run_once_name -ErrorAction Stop } catch { }
+    Remove-Item -LiteralPath $journalPath -Force
+    $guard.Dispose()
+    Remove-Item -LiteralPath $tx -Recurse -Force -ErrorAction SilentlyContinue
+}
 
-try {{ Wait-Process -Id {pid} -Timeout 60 }} catch {{ }}
+function Invoke-Swap($j) {
+    $j.state = 'moving'; Save-Journal $j; Stop-Here 'moving'
+    [void][IO.Directory]::CreateDirectory($oldDir)
+    $k = 0
+    foreach ($name in $j.old) {
+        $at = Join-Path $app $name
+        if (Test-Path -LiteralPath $at) { Move-Entry $at (Join-Path $oldDir $name) }
+        $k++; Stop-Here "old-$k"
+    }
+    $j.state = 'installing'; Save-Journal $j; Stop-Here 'installing'
+    $k = 0
+    foreach ($name in $j.new) {
+        Move-Entry (Join-Path $newDir $name) (Join-Path $app $name)
+        $k++; Stop-Here "new-$k"
+    }
+    $j.state = 'installed'; Save-Journal $j; Stop-Here 'installed'
+}
+
+# Puts the installed release back as it was, deciding for each file from where it is, and can run
+# again after an interruption. New files go back to the staging folder; nothing is deleted.
+# Returns the files that could not be put back.
+function Invoke-Rollback($j) {
+    if ($j.state -ne 'rolling_back') { $j.state = 'rolling_back'; Save-Journal $j }
+    $old = @($j.old)
+    $problems = @()
+    $k = 0
+    foreach ($name in $j.new) {
+        $at = Join-Path $app $name
+        $staged = Join-Path $newDir $name
+        $oldMoved = Test-Path -LiteralPath (Join-Path $oldDir $name)
+        $oldReplaced = ($old -notcontains $name) -or $oldMoved  # What is at $at now came from the release.
+        $installed = (Test-Path -LiteralPath $at) -and -not (Test-Path -LiteralPath $staged) -and $oldReplaced
+        if ($installed) {
+            try { [void][IO.Directory]::CreateDirectory($newDir); Move-Entry $at $staged }
+            catch { $problems += "$name ($($_.Exception.Message))" }
+        }
+        $k++; Stop-Here "rollback-new-$k"
+    }
+    $k = 0
+    foreach ($name in $old) {
+        $at = Join-Path $app $name
+        $kept = Join-Path $oldDir $name
+        if (Test-Path -LiteralPath $kept) {
+            if (Test-Path -LiteralPath $at) { $problems += "$name (a newer copy is in the way)" }
+            else { try { Move-Entry $kept $at } catch { $problems += "$name ($($_.Exception.Message))" } }
+        } elseif (-not (Test-Path -LiteralPath $at)) {
+            $problems += "$name (missing)"
+        }
+        $k++; Stop-Here "rollback-old-$k"
+    }
+    if (-not $problems -and (Test-Path -LiteralPath $oldDir) -and -not (Get-ChildItem -LiteralPath $oldDir -Force)) {
+        Remove-Item -LiteralPath $oldDir -Force
+    }
+    return $problems
+}
+
+function Finish-Rollback($j, $problems, $reason) {
+    if ($problems) {
+        $j.failed = "could not put back " + ($problems -join ', ')
+        Save-Journal $j
+        Write-Log $j 'ERROR' "undoing the update to $($j.version) is not finished, $($j.failed)"
+        return
+    }
+    Close-Transaction $j
+    Write-Log $j 'WARNING' "update to $($j.version) failed, the installed version stays: $reason"
+    [void](Start-App $j)
+}
+
+function Invoke-Commit($j) {  # The new version has started: the replaced files can go.
+    if ($j.state -ne 'committed') { $j.state = 'committed'; Save-Journal $j }
+    Stop-Here 'committed'
+    Remove-Item -LiteralPath $oldDir -Recurse -Force -ErrorAction SilentlyContinue
+    Stop-Here 'cleaned'
+    if (Test-Path -LiteralPath $oldDir) {
+        Write-Log $j 'WARNING' "the files the update to $($j.version) replaced could not all be removed yet"
+        return
+    }
+    Remove-Item -LiteralPath (Join-Path $j.data 'notes.before-update.json') -Force -ErrorAction SilentlyContinue
+    Close-Transaction $j
+}
+
+$j = Read-Journal
+if ($null -eq $j) { exit 0 }
+Set-Recovery $j
+
+if ($Recover) {
+    if ($j.state -eq 'committed' -or ($j.state -eq 'installed' -and -not (Test-Path -LiteralPath $pending))) {
+        Invoke-Commit $j
+        [void](Start-App $j)
+    } else {
+        $problems = Invoke-Rollback $j
+        Finish-Rollback $j $problems "the update was interrupted"
+    }
+    exit 0
+}
+
+try { Wait-Process -Id $WaitPid -Timeout 60 } catch { }
 Start-Sleep -Milliseconds 300
-$swapped = $false
-try {{
-    if (Test-Path -LiteralPath $old) {{ Remove-Item -LiteralPath $old -Recurse -Force }}
-    New-Item -ItemType Directory -Path $old | Out-Null
-    New-Item -ItemType File -Path $pending | Out-Null
-    foreach ($name in $replace) {{
-        $target = Join-Path $app $name
-        if (Test-Path -LiteralPath $target) {{ Move-Entry $target (Join-Path $old $name); $moved += $name }}
-    }}
-    foreach ($item in Get-ChildItem -LiteralPath $new -Force) {{
-        Move-Entry $item.FullName (Join-Path $app $item.Name); $added += $item.Name
-    }}
-    $swapped = $true
-}} catch {{
-    $err = $_.Exception.Message
-    Restore-Old
-    Write-Log "the installed version stays: $err"
-}}
-Remove-Item -LiteralPath {_ps(staging)} -Recurse -Force -ErrorAction SilentlyContinue
-if ($swapped) {{
-    $started = $null
-    try {{ $started = Start-Process -FilePath $exe -PassThru }} catch {{ }}
-    $deadline = (Get-Date).AddSeconds({started_s})
-    while ($started -and (Test-Path -LiteralPath $pending) -and (Get-Date) -lt $deadline) {{
-        Start-Sleep -Milliseconds 250
-    }}
-    if (Test-Path -LiteralPath $pending) {{
-        if ($started) {{
-            try {{ Stop-Process -Id $started.Id -Force; $started.WaitForExit(10000) | Out-Null }} catch {{ }}
-        }}
-        Restore-Old
-        Write-Log "the new version did not start, so the installed version stays"
-    }} else {{
-        Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath {_ps(data / NOTES_BACKUP)} -Force -ErrorAction SilentlyContinue
-        exit
-    }}
-}}
-Start-Process -FilePath $exe
+try {
+    Invoke-Swap $j
+} catch {
+    $reason = $_.Exception.Message
+    $problems = Invoke-Rollback $j
+    Finish-Rollback $j $problems $reason
+    exit 0
+}
+$started = Start-App $j
+$deadline = (Get-Date).AddSeconds($j.started_s)
+while ($started -and (Test-Path -LiteralPath $pending) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
+if (-not (Test-Path -LiteralPath $pending)) {
+    Invoke-Commit $j
+    exit 0
+}
+if ($started) { try { $started.Kill(); [void]$started.WaitForExit(10000) } catch { } }
+$problems = Invoke-Rollback $j
+Finish-Rollback $j $problems "the new version did not start"
 """
 
 
+def _powershell(script: Path, *args: str) -> list[str]:
+    """Returns the command line that runs a PowerShell script file hidden."""
+    return ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+            "-File", str(script), *args]
+
+
+def _write_journal(path: Path, journal: dict) -> None:
+    """Writes the journal to disk and then puts it in place in one step."""
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(journal, fh, indent=2)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def _set_run_once(key: str, name: str, command: str | None) -> None:
+    """Sets (or with command None, removes) a value under a HKCU registry key in PowerShell form."""
+    import winreg
+
+    path = key.split(":\\", 1)[1]
+    if command is None:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as handle:
+                winreg.DeleteValue(handle, name)
+        except FileNotFoundError:
+            pass
+        return
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as handle:
+        winreg.SetValueEx(handle, name, 0, winreg.REG_SZ, command)
+
+
+def prepare(app: Path, version: str, data: Path, exe: str = "DesktopNote.exe", started_s: int = STARTED_S,
+            run_once: tuple[str, str] = RUN_ONCE) -> list[str]:
+    """Readies the update of the release unpacked into TRANSACTION/NEW and registers its recovery.
+
+    Writes the update script, the PENDING marker and the journal (state "prepared"), then sets the
+    RunOnce value that recovers the update at the next login.
+
+    Args:
+        app: The app folder to update.
+        version: The new version, for the log.
+        data: The data folder, holding the notes backup and desktopnote.log.
+        exe: The executable to start afterwards.
+        started_s: How long the new version has to confirm that it started.
+        run_once: The registry key (PowerShell form) and value name for the recovery.
+
+    Returns:
+        The arguments that start the script's swap, to which the app's process id is added.
+    """
+    tx = app / TRANSACTION
+    new = sorted(entry.name for entry in (tx / NEW).iterdir())
+    old = sorted(set(release_files(app)) | {name for name in new if (app / name).exists()})
+    script = tx / SCRIPT
+    script.write_text(UPDATE_SCRIPT, encoding="utf-8-sig")
+    (tx / PENDING).write_bytes(b"")
+    recovery = subprocess.list2cmdline(_powershell(script, "-Recover"))
+    _write_journal(tx / JOURNAL, {
+        "version": version, "state": "prepared", "old": old, "new": new, "exe": exe, "data": str(data),
+        "started_s": started_s, "run_once_key": run_once[0], "run_once_name": run_once[1],
+        "run_once_command": recovery, "failed": ""})
+    _set_run_once(run_once[0], run_once[1], recovery)
+    return _powershell(script, "-WaitPid")
+
+
 def confirm_started(folder: Path | None = None) -> None:
-    """Tells a running install script that the new version has started (see install_script)."""
+    """Tells a running update script that the new version has started (see UPDATE_SCRIPT)."""
     folder = folder or app_folder()
     if folder is not None:
         try:
-            (folder / OLD / PENDING).unlink(missing_ok=True)
+            (folder / TRANSACTION / PENDING).unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def _script_running(tx: Path) -> bool:
+    """Returns whether an update script holds the transaction's lock."""
+    lock = tx / SCRIPT_LOCK
+    if not lock.exists():
+        return False
+    try:
+        with open(lock, "a"):
+            return False
+    except PermissionError:
+        return True
+
+
+def ready_to_start(folder: Path | None = None, message=None) -> bool:
+    """Returns whether this process may start the app, given an update that may be in progress.
+
+    Without an update it returns True, after removing what an unstarted update left behind. While
+    an update script runs, it returns True only for the version the script installed (state
+    "installed" or "committed"). An update cut short is handed to the recovery script, which
+    starts the app when it is done, and False is returned; if an earlier recovery could not finish,
+    or the update files are incomplete, ``message`` first tells the user what to do.
+
+    Args:
+        folder: The app folder; defaults to the running build's.
+        message: Called with a title and a text to show; defaults to win_effects.message_box.
+    """
+    folder = folder or app_folder()
+    if folder is None:
+        return True
+    tx = folder / TRANSACTION
+    if not (tx / JOURNAL).exists():
+        if tx.exists() and not _script_running(tx):
+            shutil.rmtree(tx, ignore_errors=True)
+        return True
+    try:
+        state = json.loads((tx / JOURNAL).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    if _script_running(tx):
+        return state.get("state") in ("installed", "committed")
+    show = message or win_effects.message_box
+    i18n.set_language("zh" if QLocale.system().language() == QLocale.Language.Chinese else "en")
+    if not (tx / SCRIPT).exists() or not state:
+        show("DesktopNote", tr("update.broken", folder=str(folder)))
+        return False
+    if state.get("failed"):
+        show("DesktopNote", tr("update.unfinished", problem=state["failed"], folder=str(folder)))
+    subprocess.Popen(_powershell(tx / SCRIPT, "-Recover"), creationflags=CREATE_NO_WINDOW, close_fds=True)
+    return False
 
 
 class UpdateChecker(QObject):
@@ -383,31 +585,36 @@ class Updater(QObject):
             self.failed.emit(str(exc))
 
     def _install(self, data: bytes) -> None:
-        """Unpacks the release into STAGING, backs up the notes and starts the install script.
+        """Unpacks the release into TRANSACTION, backs up the notes and starts the update script.
 
-        STAGING and the notes backup are removed again if this stops before the script runs.
+        The update folder, the notes backup and the recovery entry are removed again if this stops
+        before the script runs.
+
+        Raises:
+            OSError: If an earlier update is not finished, or the release cannot be unpacked.
         """
-        staging = self._app / STAGING
-        shutil.rmtree(staging, ignore_errors=True)
+        tx = self._app / TRANSACTION
+        if (tx / JOURNAL).exists():
+            raise OSError("an earlier update is not finished; start DesktopNote again first")
+        shutil.rmtree(tx, ignore_errors=True)
         try:
-            staging.mkdir()
-            archive = staging / "release.zip"
+            tx.mkdir()
+            archive = tx / "release.zip"
             archive.write_bytes(data)
             with zipfile.ZipFile(archive) as zf:
-                zf.extractall(staging / "unpacked")
+                zf.extractall(tx / "unpacked")
             archive.unlink()
-            new = staging / "unpacked" / APP_FOLDER
-            if not (new / "DesktopNote.exe").exists():
+            if not (tx / "unpacked" / APP_FOLDER / "DesktopNote.exe").exists():
                 raise OSError("the release does not contain DesktopNote.exe")
+            os.replace(tx / "unpacked" / APP_FOLDER, tx / NEW)
+            shutil.rmtree(tx / "unpacked")
             backup_notes(self._data)
-            script = staging / "install.ps1"
-            script.write_text(install_script(self._app, new, staging, self._pid, release_files(self._app),
-                                             self._data, self._release.version), encoding="utf-8-sig")
-            subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                              "-File", str(script)], creationflags=CREATE_NO_WINDOW, close_fds=True)
+            command = prepare(self._app, self._release.version, self._data)
+            subprocess.Popen([*command, str(self._pid)], creationflags=CREATE_NO_WINDOW, close_fds=True)
         except (OSError, zipfile.BadZipFile):
-            # Removes the download and the notes backup; the app folder is unchanged.
-            shutil.rmtree(staging, ignore_errors=True)
+            # Removes the download, the recovery entry and the notes backup; the app folder is unchanged.
+            _set_run_once(*RUN_ONCE, None)
+            shutil.rmtree(tx, ignore_errors=True)
             (self._data / NOTES_BACKUP).unlink(missing_ok=True)
             raise
         self.ready.emit()
