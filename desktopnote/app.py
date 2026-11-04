@@ -16,14 +16,16 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidgetActio
 
 from . import __version__, commands, i18n, icons, motion, win_effects
 from .about import AboutWindow
+from .controls import SegmentedControl, TextSizeSlider
+from .dates import default_due, reminder_state
 from .i18n import tr
 from .instance import COMMAND_PREFIX, SERVER_NAME, claim
 from .models import Item, Note
 from .note_window import GlassMenu, NoteWindow, glass_menu
+from .popups import GlassToolTip
 from .storage import Store, data_dir
 from .theme import DARK, FONT_FAMILIES, LIGHT, Theme, menu_qss, nearest_text_scale, tag_color
 from .updates import UpdateFlow, confirm_started
-from .widgets import GlassToolTip, SegmentedControl, TextSizeSlider, default_due, reminder_state
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +36,7 @@ LABEL_CHARS = 32  # Tray-list entries are cut to this many characters.
 LOG_FILE = "desktopnote.log"  # In the data folder; only warnings and errors are written.
 LOG_BYTES = 256 * 1024  # The log is rotated at this size, keeping one older file.
 RESCUE_DELAY_MS = 500  # After a display change, before notes are brought back on screen.
-HANDLE_W, HANDLE_H = 120, 20  # The drag handle at the top centre of a note (widgets.Grabber).
+HANDLE_W, HANDLE_H = 120, 20  # The drag handle at the top centre of a note (controls.Grabber).
 REQUEST_MS = 2_000  # How long a connection to the local server may take to send its message.
 TOAST_CHECK_MS = 10_000  # After this, a notification that failed is shown as a tray message.
 

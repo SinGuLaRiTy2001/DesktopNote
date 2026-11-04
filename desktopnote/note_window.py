@@ -24,24 +24,17 @@ from PySide6.QtWidgets import (
 )
 
 from . import icons, motion, win_effects
+from .controls import Grabber, OverlayScrollBar, TagPicker
+from .dates import default_due
 from .docking import EdgeDock
 from .glass import GlassWindow
 from .i18n import tr
+from .items import ItemRow, TitleEdit
 from .models import Item, Note, now_iso
+from .popups import ColorPopup, DateTimePopup
 from .reorder import RowReorder
 from .snapping import SnapMove
-from .theme import BODY_PT, Theme, glow_color, menu_qss, note_qss, tag_color
-from .widgets import (
-    ColorPopup,
-    DateTimePopup,
-    Grabber,
-    ItemRow,
-    OverlayScrollBar,
-    TagPicker,
-    TitleEdit,
-    css_color,
-    default_due,
-)
+from .theme import BODY_PT, Theme, css_color, glow_color, menu_qss, note_qss, tag_color
 
 EDGE = 7  # Width in px of the resize-sensitive border.
 CORNER = 16  # Larger grab zone at the corners.

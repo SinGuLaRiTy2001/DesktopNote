@@ -18,9 +18,8 @@ from PySide6.QtWidgets import (
 from . import __version__, icons, motion, win_effects
 from .glass import RADIUS, GlassWindow
 from .i18n import tr
-from .theme import Theme
+from .theme import Theme, css_color
 from .updates import UpdateFlow
-from .widgets import css_color
 
 REPO_URL = "https://github.com/SinGuLaRiTy2001/DesktopNote"
 

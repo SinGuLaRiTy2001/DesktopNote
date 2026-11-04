@@ -16,12 +16,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6.QtCore import QPoint, QRect  # noqa: E402
 
 from desktopnote import i18n, snapping  # noqa: E402
+from desktopnote.dates import format_due, half_hour_step, humanize_delta, reminder_state  # noqa: E402
 from desktopnote.docking import hidden_depth, reveal_zone, revealed_rect, shift_into  # noqa: E402
 from desktopnote.instance import claim  # noqa: E402
 from desktopnote.models import Item, Note  # noqa: E402
 from desktopnote.snapping import EdgeSnapper, Snapper  # noqa: E402
 from desktopnote.storage import Store  # noqa: E402
-from desktopnote.widgets import format_due, half_hour_step, humanize_delta, reminder_state  # noqa: E402
 
 
 class ReminderStateTest(unittest.TestCase):

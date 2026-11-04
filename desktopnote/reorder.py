@@ -11,7 +11,8 @@ from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 from . import motion
 
 if TYPE_CHECKING:
-    from .widgets import ItemRow, OverlayScrollBar
+    from .controls import OverlayScrollBar
+    from .items import ItemRow
 
 
 class RowReorder(QObject):

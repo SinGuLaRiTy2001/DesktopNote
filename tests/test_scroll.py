@@ -14,10 +14,10 @@ from PySide6.QtGui import QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from desktopnote.controls import OverlayScrollBar  # noqa: E402
 from desktopnote.models import Item, Note  # noqa: E402
 from desktopnote.note_window import NoteWindow  # noqa: E402
 from desktopnote.theme import LIGHT  # noqa: E402
-from desktopnote.widgets import OverlayScrollBar  # noqa: E402
 
 _app = QApplication.instance() or QApplication(sys.argv)
 _app.setQuitOnLastWindowClosed(False)

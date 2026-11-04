@@ -50,8 +50,8 @@ class Desktop(QWidget):
 def main() -> int:
     """Samples every theme and desktop combination, prints MEASURED and returns the exit code."""
     argparse.ArgumentParser(description=__doc__.split("\n\n")[0]).parse_args()  # Only --help.
+    from desktopnote.popups import DateTimePopup
     from desktopnote.theme import TAGS
-    from desktopnote.widgets import DateTimePopup
     tints = list(TAGS)
     H.qapp()
     desk = Desktop()  # Created first, so the pinned notes open above it.

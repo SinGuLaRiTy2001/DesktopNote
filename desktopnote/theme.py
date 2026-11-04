@@ -37,6 +37,14 @@ def nearest_text_scale(scale: float) -> float:
     return min(TEXT_SCALES, key=lambda step: abs(step - scale))
 
 
+def css_color(css: str) -> QColor:
+    """Parses a CSS colour of the form ``rgba(r,g,b,a)`` (alpha in 0..1) or ``#hex``."""
+    if css.startswith("rgba"):
+        r, g, b, a = (float(v) for v in css[css.index("(") + 1 : css.index(")")].split(","))
+        return QColor(int(r), int(g), int(b), int(a * 255))
+    return QColor(css)
+
+
 _HEX = re.compile(r"#[0-9A-Fa-f]{6}")
 
 

@@ -12,6 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from desktopnote.items import DeletePill, ItemRow  # noqa: E402
 from desktopnote.theme import (  # noqa: E402
     DARK,
     GLOW_PILL_FACTOR,
@@ -22,7 +23,6 @@ from desktopnote.theme import (  # noqa: E402
     blend,
     glow_color,
 )
-from desktopnote.widgets import DeletePill, ItemRow  # noqa: E402
 
 EXTREME_CUSTOM = ["#000000", "#FFFFFF", "#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#808080", "#1B2A5A", "#FFF6DC"]
 
