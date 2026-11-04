@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0rc6] - 2026-11-05
+
 ### Added
 
 - A note let go while snapped to a note tucked away at an edge tucks away at that edge too.
@@ -150,7 +152,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Reminder notifications, keep-on-top, and a tray menu listing every note.
 - Settings for theme, language (English and Simplified Chinese), text size and start at login.
 
-[Unreleased]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc5...HEAD
+[Unreleased]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc6...HEAD
+[1.0.0rc6]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc5...v1.0.0rc6
 [1.0.0rc5]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc4...v1.0.0rc5
 [1.0.0rc4]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc3...v1.0.0rc4
 [1.0.0rc3]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc2...v1.0.0rc3
