@@ -1,13 +1,20 @@
 # DesktopNote
 
+English | [简体中文](README.zh-CN.md)
+
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.10%2B-lightgrey)
 ![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2FSinGuLaRiTy2001%2FDesktopNote%2Fdev%2Fpyproject.toml&query=%24.project.version&label=version&color=lightgrey)
 [![CI](https://github.com/SinGuLaRiTy2001/DesktopNote/actions/workflows/ci.yml/badge.svg)](https://github.com/SinGuLaRiTy2001/DesktopNote/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
-Minimal frosted-glass sticky notes for the Windows desktop: text, to-dos and reminders that
-stay exactly where you left them.
+DesktopNote is a lightweight sticky-notes app for the Windows desktop. Its frosted-glass notes hold
+free text, to-dos and reminders, blend into any wallpaper in light or dark mode, and stay exactly
+where you put them — on any monitor, or tucked away at a screen edge until you need them.
+
+It is meant for the small things you want in sight while you work: a shopping list, the next three
+tasks, a call at 3 pm. Notes save themselves, reminders notify you when they are due, and a command
+line lets scripts and AI agents add to your notes too.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
@@ -16,157 +23,200 @@ stay exactly where you left them.
 
 ## Features
 
-- **Glass notes**: notes blur the desktop behind them, follow Windows' light or dark mode, and
-  stay readable on any wallpaper.
-- **Three kinds of items**: free text, to-dos you tick off, and reminders with a date and time.
-  Click and hold an item to lift it, then drag it to reorder.
-- **Reminders**: a reminder turns orange when it is due within the hour, and a Windows
-  notification appears when it is due.
-- **Colour tags**: tint a note with one of the preset colours or any custom colour, so notes
-  are easy to tell apart.
-- **Titles and keep-on-top**: give a note an optional title, or keep it above other windows.
-- **Snap to align**: drag a note close to another and it snaps next to it, edges aligned; near
-  the edge of a monitor, it sticks to that edge.
-- **Dock to edge**: push a note into the left, right or top edge of any monitor to tuck it away,
-  leaving a thin strip. It slides out when the cursor comes to the strip and stays above other
-  windows.
-- **Tray menu**: create notes, bring them all to the front, jump to one note by name, and change
-  settings.
-- **Scripts and AI agents**: a command line shows notes as JSON, makes notes and adds, changes or
-  deletes items, so an agent can turn your email or calendar into to-dos and reminders.
-- **Settings**: theme (light, dark or match Windows), language (English or Simplified Chinese;
-  at first that of Windows), text size for all notes, and start at login.
-- **Automatic saving**: changes are saved as you type, with a backup of the previous version and
-  one copy per day for the last week. If saving keeps failing, the tray icon tells you.
-- **Updates**: check for a new version in the About window and install it with one click; notes
-  and settings are kept. If the new version does not start, the installed one comes back; an
-  update cut short, for example by a power cut, is undone at the next login or start. A
-  pre-release is also offered newer pre-releases. When run from source, the release page opens
-  instead.
+**Notes and productivity**
+
+- Three kinds of items in a note: free text, to-dos you tick off, and reminders with a date and time.
+- Reminders turn orange when they are due within the hour and show a Windows notification when due.
+- Optional note titles, and items you reorder by click-and-hold, then drag.
+- Colour tags, from a set of preset colours or any custom colour, so notes are easy to tell apart.
+- Keep on Top for notes that should stay above other windows.
+
+**Desktop experience**
+
+- Frosted-glass notes that follow Windows' light or dark mode, or a theme you choose.
+- Snap to align: a note dragged close to another snaps next to it with edges aligned, and sticks to
+  monitor edges.
+- Edge docking: push a note into the left, right or top edge of any monitor to tuck it away; it
+  slides out when the cursor reaches it.
+- Multi-monitor aware: notes keep their size when moved between monitors with different display
+  scaling.
+- A system tray menu to create notes, bring them all to the front, jump to a note by name and
+  change settings.
+- Smooth, eased animations, English and Simplified Chinese, and five text sizes.
+
+**Automation and reliability**
+
+- A command line, `desktopnote-cli`, that reads and changes notes and prints JSON — for scripts and
+  AI agents.
+- Automatic saving as you type, with a backup of the previous version and a daily copy for the last
+  week.
+- Update checks on request, with one-click installation; the installed version is put back if an
+  update does not complete.
+
+## Architecture
+
+DesktopNote is a Python application built on PySide6 (Qt for Python), with Windows-specific
+integration through the Win32 and DWM APIs.
+
+```mermaid
+flowchart LR
+    subgraph GUI["DesktopNote process"]
+        UI["Note windows and tray menu"]
+        Controller["Application controller"]
+        Server["Local server"]
+        Updater["Updater"]
+    end
+    CLI["desktopnote-cli"]
+    Commands["Notes model and commands"]
+    Storage[("Storage: notes.json, backups, lock")]
+    Windows["Windows integration: glass, notifications, autostart"]
+    Releases["GitHub Releases"]
+    Script["Update script"]
+
+    UI <--> Controller
+    Controller --> Commands
+    Controller --> Storage
+    Server --> Controller
+    CLI -- "local IPC, app running" --> Server
+    CLI -- "locked file access, app not running" --> Storage
+    CLI --> Commands
+    UI --> Windows
+    Updater -- "HTTPS, on request" --> Releases
+    Updater --> Script
+    Script -- "swaps the app files and restarts" --> GUI
+```
+
+- **Desktop application.** The application controller owns the note windows, the tray menu,
+  reminders and the app's lifecycle. Only one instance runs per user; a second launch brings the
+  running app's notes to the front.
+- **Model and storage.** Notes and their items are plain data objects. The storage layer saves them
+  as JSON, keeps backups, and holds a lock on the data folder while it reads or writes, so only one
+  process changes the notes at a time.
+- **Command line.** `desktopnote-cli` and the app share one set of note commands. While the app
+  runs, the command line sends each command to it over local inter-process communication, so the
+  change shows at once; otherwise it changes the data file directly, under the same lock.
+- **Updates.** The updater finds a newer release on GitHub, checks the download against its
+  published SHA-256 checksum, and hands over to a script that replaces the app files once the app
+  has quit.
+- **Windows integration.** Glass effects, keep-on-top, notifications and autostart use Windows
+  APIs; these parts are Windows-only.
 
 ## Getting started
 
-Requirements: 64-bit Windows 10 or 11 (full glass on Windows 11 22H2 and later).
+Requirements: 64-bit Windows 10 or 11. The full glass look needs Windows 11 22H2 or later; earlier
+versions use a simpler blur.
 
-1. Download `DesktopNote-<version>-win64.zip` from [Releases](https://github.com/SinGuLaRiTy2001/DesktopNote/releases).
-2. Extract it anywhere, for example to `%LOCALAPPDATA%\Programs\`, and run `DesktopNote\DesktopNote.exe`.
-   No installation is needed. Windows may warn about an app from an unknown publisher the first
-   time; choose **More info** → **Run anyway**.
+1. Download `DesktopNote-<version>-win64.zip` from
+   [Releases](https://github.com/SinGuLaRiTy2001/DesktopNote/releases).
+2. Extract it anywhere, for example to `%LOCALAPPDATA%\Programs\`, and run
+   `DesktopNote\DesktopNote.exe`. DesktopNote is a portable app; nothing needs to be installed.
+   The first time, Windows may warn about an app from an unknown publisher; choose
+   **More info** → **Run anyway**.
 
-DesktopNote runs in the system tray. On first start it opens a welcome note that walks you
-through the basics. To remove it, turn off **Start at Login**, quit, and delete the folder.
-
-### Run from source
-
-Requires Python 3.10+.
-
-```powershell
-git clone https://github.com/SinGuLaRiTy2001/DesktopNote.git
-cd DesktopNote
-py -3 -m venv .venv
-.\.venv\Scripts\pip install -r requirements.txt
-.\.venv\Scripts\pythonw DesktopNote.pyw
-```
-
-To build the release zip, see [docs/RELEASING.md](docs/RELEASING.md).
+DesktopNote runs in the system tray. On first start it opens a welcome note that walks you through
+the basics, uses the language of Windows, and starts with Windows from then on (see **Settings**).
+To remove it, turn off **Start at Login**, quit, and delete its folder; your notes stay in the data
+folder (see [Data and privacy](#data-and-privacy)).
 
 ## Usage
 
-### Notes
+**Notes.** Create a note from the tray menu (**New Note**) or from any note's **⋯** menu. Drag the
+bar at the top to move a note, and drag an edge or corner to resize it. Double-click a note, or tap
+the pencil at the bottom right, to edit it; tap **Done** or press `Esc` to finish.
 
-| Action | How |
-|---|---|
-| New note | Tray menu → **New Note**, or **⋯** → **New Note** on any note |
-| Move | Drag the bar at the top of the note |
-| Tuck away at an edge | Drag the note against the left, right or top edge of a monitor and push on until it turns see-through, then let go |
-| Show a tucked-away note | Move the cursor onto its strip at the edge (on an edge between two monitors, rest it there a moment), or pick the note in the tray menu |
-| Untuck a note | Drag it away from the edge |
-| Move to another monitor | Drag it across; at the edge between the monitors, push on through |
-| Resize | Drag an edge or a corner |
-| Edit | Double-click the note, or tap the pencil at the bottom right |
-| Finish editing | Tap **Done**, or press `Esc` |
-| Colour tag | **⋯** → pick a colour, or the last swatch for a palette and hex input |
-| Keep on top | **⋯** → **Keep on Top** (always on while a note is tucked away) |
-| Delete | **⋯** → **Delete Note**, then confirm |
+**Items.** In edit mode, add text, to-dos and reminders with the buttons at the bottom of the note.
+`Enter` in a to-do or reminder adds another one below it. Tap the circle to tick a to-do, and tap
+**Add Time** to give a reminder its date and time. To delete an item, hover over it, tap the **×**,
+then **Delete**.
 
-### Items
+**Colour tags and Keep on Top.** Open a note's **⋯** menu to pick a colour tag (the last swatch
+opens a palette with hex input), to keep the note on top, or to delete it.
 
-In edit mode, add items with the buttons at the bottom of the note.
+**Docking and monitors.** Drag a note against the left, right or top edge of a monitor and push on
+until it turns see-through, then let go. The note tucks away, leaving a thin strip; move the cursor
+onto the strip to show it, or drag it away from the edge to untuck it. To move a note to another
+monitor, drag it across; at an edge shared by two monitors, push on through.
 
-| Action | How |
-|---|---|
-| Next item | `Enter` in a to-do or reminder adds another one below it |
-| End a list | `Enter` on an empty to-do |
-| Line break | `Enter` in a text item; `Shift` + `Enter` in a to-do or reminder |
-| Remove an empty item | `Backspace` on an empty item |
-| Delete an item | Hover over it, tap the **×** on the right, then **Delete** |
-| Reorder items | Click and hold an item until it lifts, then drag it up or down (also outside edit mode) |
-| Tick a to-do | Tap the circle on the left |
-| Set a reminder's time | Tap **Add Time** (or the date) and pick a day and time; **Remove Time** clears it |
+**Tray menu and settings.** Click the tray icon to bring every note to the front, or right-click it
+for the menu: it lists every note by title or first line, and **Settings** holds the theme, text
+size, language and **Start at Login**. **About DesktopNote** shows the version and
+**Check for Updates**.
 
-### Tray menu
+## Command line and automation
 
-- **Click or double-click** the tray icon to show every note and bring them to the front.
-- **Right-click** it to open the menu. Every note is listed there by its title or first line;
-  choose one to jump to it.
-- **Settings** stay open while you change them. **Open Data Folder** shows where your notes are
-  stored.
-- **About DesktopNote** shows the version, **Check for Updates** and a link to this repository.
-
-### Scripts and AI agents
-
-`desktopnote-cli.exe`, next to `DesktopNote.exe` (from source: `python -m desktopnote.cli`), lets
-scripts and AI agents manage notes and items, for example from your email or calendar. While DesktopNote runs,
-a change shows at once; otherwise it is saved for the next start.
+`desktopnote-cli.exe` sits next to `DesktopNote.exe` in the release; from source, run
+`python -m desktopnote.cli`. It lets scripts and AI agents look at notes, make notes, and add,
+change, tick or delete items — for example to turn your email or calendar into to-dos and
+reminders.
 
 ```
 desktopnote-cli notes                                            # every note: id, title, counts
 desktopnote-cli show Work                                        # one note and its items, with ids
-desktopnote-cli new-note --title Work                            # a note; --title is optional
 desktopnote-cli add todo "Reply to Anna" --note Work             # into "Work", made if missing
 desktopnote-cli add reminder "Dentist" --due "2026-11-05 09:00"  # into "Inbox"
 desktopnote-cli edit <item id> --text "Reply by Friday" --done   # also --due, --no-due, --undone
 desktopnote-cli delete <item id>                                 # delete one item
 ```
 
-A note is named by its id or its title, so notes without a title work too. `list` prints every
-note with its items, and `done <item id>` is short for `edit <item id> --done`. Every command
-prints one JSON object, `{"ok": true, ...}` or `{"ok": false, "error": "..."}`, and exits with 0,
-1 on an error or 2 for invalid arguments. Commands run at the same time take turns. If the error
-says DesktopNote did not answer in time, check with `list` before trying again: the change may
-still be made.
+The other commands are `list` (every note with its items), `new-note [--title ...]` and
+`done <item id>`; `desktopnote-cli --help` describes them all. A note is named by its id or title.
+Every command prints one JSON object, `{"ok": true, ...}` or `{"ok": false, "error": "..."}`, and
+exits with 0 on success, 1 on an error or 2 for invalid arguments. While DesktopNote runs, changes
+appear at once; otherwise they are saved for the next start.
 
-## Data
+## Data and privacy
 
-Notes and settings are stored in `notes.json` in `%APPDATA%\DesktopNote\`, with the previous
-version kept as `notes.json.bak` and the first version of each of the last seven days in
-`backups\`. To go back to one of them, quit DesktopNote and copy it over `notes.json`. To move your
-notes to another computer, copy this folder.
+Notes and settings are stored in `notes.json` in `%APPDATA%\DesktopNote\` (**Settings** →
+**Open Data Folder**). Every change is saved as you type. DesktopNote keeps the previous version as
+`notes.json.bak` and the first version of each of the last seven days in `backups\`; to go back to
+one, quit DesktopNote and copy it over `notes.json`. To move your notes to another computer, copy
+the folder.
 
-If another program, such as a command-line call, is using the notes when DesktopNote starts, it
-waits until they are free; after 10 seconds it asks whether to keep waiting or quit.
+A notes file that cannot be read is never overwritten: it is kept as
+`notes-unreadable-<time>.json`, the notes are restored from the backup if possible, and the tray
+icon tells you. Warnings and errors are logged to `desktopnote.log` in the same folder.
 
-A file that cannot be read is never overwritten: it is renamed to `notes-unreadable-<time>.json`,
-the notes come from the backup if possible, and the tray icon says so. Warnings and errors, if
-any, are logged to `desktopnote.log`, and `DesktopNote.ico` is the icon on DesktopNote's
-notifications. During an update, the notes are also copied to `notes.before-update.json` until the
-new version has started.
+DesktopNote connects to the internet only when you click **Check for Updates**: it asks GitHub for
+the latest release and, if you install it, downloads it from there. Notes never leave your
+computer.
 
-DesktopNote connects to the internet only when you click **Check for Updates**: it asks GitHub
-for the latest release and, if you install it, downloads it from there.
+## Development
 
-## How it's built
+Requires Python 3.10 or later on Windows.
 
-Built with [Claude Code](https://claude.com/claude-code) under a defined scope and workflow:
+```powershell
+git clone https://github.com/SinGuLaRiTy2001/DesktopNote.git
+cd DesktopNote
+py -3 -m venv .venv
+.\.venv\Scripts\pip install -e ".[dev]"          # PySide6, and ruff for linting
+.\.venv\Scripts\pythonw DesktopNote.pyw         # run the app
+.\.venv\Scripts\python -m desktopnote.cli list  # run the command line
+```
 
-| Path | Contents |
+Run the tests and the linter as CI does:
+
+```powershell
+$env:QT_QPA_PLATFORM = "offscreen"              # optional: no windows on screen
+.\.venv\Scripts\python -m unittest discover tests
+.\.venv\Scripts\ruff check .
+```
+
+CI runs the tests on Python 3.10–3.13 and on the exact versions the release is built with.
+
+| Path | Purpose |
 |---|---|
-| [`desktopnote/`](desktopnote/) | Application package |
-| [`tests/`](tests/) | Unit tests, run in [CI](.github/workflows/ci.yml) on Python 3.10–3.13 |
-| [`tools/`](tools/README.md) | On-screen audits for alignment, text size, contrast and startup time |
-| [`scripts/`](scripts/) | Release build ([docs/RELEASING.md](docs/RELEASING.md)); changes in [CHANGELOG.md](CHANGELOG.md) |
-| [`CLAUDE.md`](CLAUDE.md) | Product requirements that every change must meet |
-| [`.claude/`](.claude/) | Claude Code settings and workflow commands (`/verify`, `/bugfix`, `/audit`) |
+| [`desktopnote/`](desktopnote/) | Application package: UI, controller, model, storage, command line, updater |
+| [`tests/`](tests/) | Automated tests |
+| [`tools/`](tools/README.md) | On-screen checks for alignment, text size, contrast and startup time |
+| [`scripts/`](scripts/) | Release build |
+| [`docs/`](docs/) | Release procedure and screenshots |
+| `DesktopNote.pyw`, `DesktopNoteCLI.py` | Launchers for the app and the command line |
+
+## Build and release
+
+`scripts/build.py` builds the portable release zip with its SHA-256 checksum. The full procedure
+is in [docs/RELEASING.md](docs/RELEASING.md), and the changes in each version are in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
