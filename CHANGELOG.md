@@ -12,6 +12,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - One copy of the notes per day is kept for the last week, in the data folder's `backups`.
 - The tray icon says so when the notes cannot be saved; saving is retried.
 - If an updated version does not start, the installed version comes back.
+- On the first start, the language follows Windows.
 - Notes tucked away at an edge use far less power while the cursor is elsewhere.
 
 ### Fixed

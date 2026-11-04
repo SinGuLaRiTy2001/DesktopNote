@@ -34,8 +34,8 @@ stay exactly where you left them.
   settings.
 - **Scripts and AI agents**: a command line shows notes as JSON, makes notes and adds, changes or
   deletes items, so an agent can turn your email or calendar into to-dos and reminders.
-- **Settings**: theme (light, dark or match Windows), language (English or Simplified Chinese),
-  text size for all notes, and start at login.
+- **Settings**: theme (light, dark or match Windows), language (English or Simplified Chinese;
+  at first that of Windows), text size for all notes, and start at login.
 - **Automatic saving**: changes are saved as you type, with a backup of the previous version and
   one copy per day for the last week. If saving keeps failing, the tray icon tells you.
 - **Updates**: check for a new version in the About window and install it with one click; notes

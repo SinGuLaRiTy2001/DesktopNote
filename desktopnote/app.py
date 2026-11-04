@@ -9,7 +9,7 @@ from ctypes import wintypes
 from datetime import datetime
 from typing import Callable
 
-from PySide6.QtCore import QAbstractNativeEventFilter, QRect, Qt, QTimer, QUrl
+from PySide6.QtCore import QAbstractNativeEventFilter, QLocale, QRect, Qt, QTimer, QUrl
 from PySide6.QtGui import QCursor, QDesktopServices, QFont, QGuiApplication
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidgetAction
@@ -99,6 +99,8 @@ class DesktopNoteApp:
             self.store.load()
         settings = self.store.settings
         settings.text_scale = nearest_text_scale(settings.text_scale)  # The steps may have changed since it was saved.
+        if settings.first_run:
+            settings.language = "zh" if QLocale.system().language() == QLocale.Language.Chinese else "en"
         self.windows: dict[str, NoteWindow] = {}
         self.about: AboutWindow | None = None
         i18n.set_language(self.store.settings.language)

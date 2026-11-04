@@ -229,7 +229,8 @@ class Settings:
         autostart: Whether DesktopNote starts at login.
         due_soon_minutes: Reminders within this many minutes of their due time show a clock icon.
         first_run: Whether the next start is the first one; it then applies the autostart
-            setting and creates a welcome note if there are no notes.
+            setting, picks the language from Windows and creates a welcome note if there are no
+            notes.
         language: UI language code: "zh" or "en".
         theme: "auto" (follow Windows), "light" or "dark".
         text_scale: Note text size; one of ``theme.TEXT_SCALES``.
