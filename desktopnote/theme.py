@@ -381,7 +381,6 @@ def popup_qss(t: Theme) -> str:
         padding: 1px 6px 5px 6px;  /* digits sit low */
         selection-background-color: {t.pressed}; selection-color: {t.text}; color: {t.text};
     }}
-    QDateTimeEdit:hover, QDateTimeEdit:focus {{ background: {t.hover}; }}
     QDateTimeEdit::up-button, QDateTimeEdit::down-button {{ width: 0; border: none; }}
     QPushButton {{ border: none; border-radius: {FIELD_RADIUS}px; padding: 4px 8px; background: transparent; }}
     QPushButton:pressed {{ background: {t.pressed}; }}

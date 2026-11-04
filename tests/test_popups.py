@@ -10,7 +10,8 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import QPoint  # noqa: E402
+from PySide6.QtCore import QEvent, QPoint, QPointF  # noqa: E402
+from PySide6.QtGui import QEnterEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -44,6 +45,34 @@ class PopupFadeInTest(unittest.TestCase):
         popup = self.open(ColorPopup(LIGHT, "#9FCBEF"))
         self.assertIsNotNone(popup._intro)
         self.assertIsNotNone(popup._pop_tween)
+
+
+class TimeFieldHoverTest(unittest.TestCase):
+    """The time field's background eases in on hover or focus and out afterwards."""
+
+    def setUp(self):
+        self.popup = DateTimePopup(LIGHT, datetime(2030, 1, 1, 9, 0))
+        self.popup.show()
+        self.addCleanup(self.popup.close)
+        self.edit = self.popup.time_edit
+
+    def test_hover_eases_in_and_out(self):
+        QApplication.sendEvent(self.edit, QEnterEvent(QPointF(5, 5), QPointF(5, 5), QPointF(5, 5)))
+        QTest.qWait(40)
+        self.assertGreater(self.edit._level, 0.0)
+        self.assertLess(self.edit._level, 1.0)  # Still easing in.
+        QTest.qWait(300)
+        self.assertEqual(self.edit._level, 1.0)
+        QApplication.sendEvent(self.edit, QEvent(QEvent.Leave))
+        QTest.qWait(400)
+        self.assertEqual(self.edit._level, 0.0)
+
+    def test_stays_while_focused(self):
+        self.popup.activateWindow()
+        self.edit.setFocus()
+        QTest.qWait(300)
+        self.assertTrue(self.edit.hasFocus())
+        self.assertEqual(self.edit._level, 1.0)
 
 
 if __name__ == "__main__":

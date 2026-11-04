@@ -500,13 +500,72 @@ class HalfHourTimeEdit(QTimeEdit):
     """HH:mm editor whose steps (arrow keys, wheel, stepper buttons) snap to :00 and :30.
 
     For example 10:30 -> 11:00 -> 11:30, and 10:40 steps up to 11:00 or down to 10:30. Typing
-    stays free-form. Stepping past midnight wraps the time and reports the day change.
+    stays free-form. Stepping past midnight wraps the time and reports the day change. While
+    hovered or focused, a rounded background eases in behind the time, and out afterwards.
+
+    Attributes:
+        hover_color: Full-strength colour of that background (theme.hover).
 
     Signals:
         dayChanged: Emitted with the day change (+1 or -1) when stepping wraps past midnight.
     """
 
     dayChanged = Signal(int)
+
+    def __init__(self, time: QTime, parent=None):
+        super().__init__(time, parent)
+        self.hover_color = QColor(0, 0, 0, 0)
+        self._hovered = False
+        self._level = 0.0  # Background strength, eased.
+        self._tween: motion.Tween | None = None
+
+    def _ease(self) -> None:
+        """Eases the background in while hovered or focused, and out otherwise."""
+        target = 1.0 if self._hovered or self.hasFocus() else 0.0
+        if self._tween is not None:
+            self._tween.stop()
+        start = self._level
+        if start == target:
+            return
+
+        def step(v: float) -> None:
+            self._level = start + (target - start) * v
+            self.update()
+
+        duration = motion.HoverFx.IN_MS if target > start else motion.HoverFx.OUT_MS
+        self._tween = motion.Tween(self, duration, step)
+        self._tween.start()
+
+    def enterEvent(self, e):
+        super().enterEvent(e)
+        self._hovered = True
+        self._ease()
+
+    def leaveEvent(self, e):
+        super().leaveEvent(e)
+        self._hovered = False
+        self._ease()
+
+    def focusInEvent(self, e):
+        super().focusInEvent(e)
+        self._ease()
+
+    def focusOutEvent(self, e):
+        super().focusOutEvent(e)
+        self._ease()
+
+    def paintEvent(self, e):
+        """Paints the eased background, then the editor over it."""
+        if self._level > 0.0:
+            color = QColor(self.hover_color)
+            color.setAlphaF(color.alphaF() * self._level)
+            p = QPainter(self)
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setPen(Qt.NoPen)
+            p.setBrush(color)
+            p.drawRoundedRect(QRectF(self.rect()), FIELD_RADIUS, FIELD_RADIUS)
+            p.end()
+        super().paintEvent(e)
 
     def stepBy(self, steps: int) -> None:
         """Steps the time to the next or previous half hour, ``|steps|`` times."""
@@ -568,6 +627,7 @@ class DateTimePopup(GlassPopup):
         self.time_edit.setDisplayFormat("HH:mm")
         self.time_edit.setAlignment(Qt.AlignCenter)
         self.time_edit.setFixedSize(56, 28)
+        self.time_edit.hover_color = css_color(theme.hover)
         self.time_edit.dayChanged.connect(
             lambda days: self.calendar.set_selected(self.calendar.selected + timedelta(days=days)))
         time_row.addWidget(self.time_edit, 0, Qt.AlignVCenter)
