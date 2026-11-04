@@ -24,7 +24,7 @@ from .models import Item, Note
 from .note_window import GlassMenu, NoteWindow, glass_menu
 from .popups import GlassToolTip
 from .storage import Store, data_dir
-from .theme import DARK, FONT_FAMILIES, LIGHT, Theme, menu_qss, nearest_text_scale, tag_color
+from .theme import DARK, FONT_FAMILIES, LIGHT, WINDOW_RADIUS, Theme, menu_qss, nearest_text_scale, tag_color
 from .updates import UpdateFlow, confirm_started, ready_to_start
 
 log = logging.getLogger(__name__)
@@ -321,7 +321,7 @@ class DesktopNoteApp:
         """Removes a note, fades its window out and saves at once."""
         self.windows.pop(win.note.id, None)
         self.store.notes = [n for n in self.store.notes if n.id != win.note.id]
-        motion.Ghost.from_screen(win, 8)  # The DWM corner radius.
+        motion.Ghost.from_screen(win, WINDOW_RADIUS)
         win.close()
         win.deleteLater()
         self.save_now()
@@ -631,7 +631,7 @@ class DesktopNoteApp:
             apply()
             return
         self._fading = True
-        targets = [(win, 8) for win in self.windows.values()]  # 8 is the notes' DWM corner radius.
+        targets = [(win, WINDOW_RADIUS) for win in self.windows.values()]
         targets += [(menu, GlassMenu.RADIUS) for menu in (self.tray_menu, *self.tray_menu.findChildren(QMenu))]
 
         def run() -> None:

@@ -13,9 +13,8 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import QWidget
 
 from . import motion, win_effects
-from .theme import Theme
+from .theme import WINDOW_RADIUS, Theme
 
-RADIUS = 8  # Matches Windows 11's corner rounding, so the painted border and DWM's clip coincide.
 NATIVE_BACKDROP = win_effects.HAS_SYSTEM_BACKDROP
 
 
@@ -129,7 +128,7 @@ class GlassWindow(QWidget):
     def glass_path(self) -> QPainterPath:
         """Returns the window's rounded outline, on the pixel grid for a 1 px border."""
         path = QPainterPath()
-        path.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), RADIUS, RADIUS)
+        path.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), WINDOW_RADIUS, WINDOW_RADIUS)
         return path
 
     def paint_glass(self, p: QPainter) -> QPainterPath:
@@ -155,7 +154,7 @@ class GlassWindow(QWidget):
         if self.solid and self.backdrop is not None:
             rect, pm = self.backdrop
             frame = QPainterPath()  # The window's rounded outline, up to its edge.
-            frame.addRoundedRect(QRectF(self.rect()), RADIUS, RADIUS)
+            frame.addRoundedRect(QRectF(self.rect()), WINDOW_RADIUS, WINDOW_RADIUS)
             p.save()
             p.setClipPath(frame)
             p.setRenderHint(QPainter.SmoothPixmapTransform)

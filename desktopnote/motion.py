@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .theme import CONTROL_RADIUS
+
 QWIDGETSIZE_MAX = (1 << 24) - 1
 
 EASE_OUT = QEasingCurve.OutCubic
@@ -688,7 +690,7 @@ class HoverFx(QObject):
     A single shared event filter: on Enter/Leave it eases a per-button level 0..1, and on each
     Paint it draws a rounded background at that level *before* the button paints its icon or text
     over it. Buttons opt out with the dynamic property hoverFx=False and choose a corner radius
-    with hoverRadius.
+    with hoverRadius (CONTROL_RADIUS by default).
 
     Attributes:
         color: Full-strength hover colour (theme.hover); set by the windows on theme changes.
@@ -724,12 +726,12 @@ class HoverFx(QObject):
             color = QColor(self.color)
             color.setAlphaF(color.alphaF() * obj._hover_level)
             radius = obj.property("hoverRadius")
+            radius = CONTROL_RADIUS if radius is None else radius
             p = QPainter(obj)
             p.setRenderHint(QPainter.Antialiasing)
             p.setPen(Qt.NoPen)
             p.setBrush(color)
-            p.drawRoundedRect(QRectF(obj.rect()), radius if radius is not None else 7,
-                              radius if radius is not None else 7)
+            p.drawRoundedRect(QRectF(obj.rect()), radius, radius)
             p.end()
         return False
 

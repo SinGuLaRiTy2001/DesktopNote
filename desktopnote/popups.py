@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
 from . import icons, motion, win_effects
 from .dates import default_due, half_hour_step
 from .i18n import month_fields, tr
-from .theme import Theme, css_color, is_hex, popup_qss
+from .theme import DUE_PT, FIELD_RADIUS, WINDOW_RADIUS, Theme, css_color, is_hex, popup_qss
 
 
 # --- Tooltips ----------------------------------------------------------------
@@ -64,7 +64,6 @@ class GlassToolTip(QWidget):
         owner: The widget whose tooltip is showing, or None.
     """
 
-    DELAY_OUT_MS = 120
     OFFSET = QPoint(2, 22)  # Below the cursor.
 
     _instance: GlassToolTip | None = None
@@ -109,7 +108,7 @@ class GlassToolTip(QWidget):
         """Shows ``text`` near the cursor for ``owner``, kept on screen, and fades it in."""
         theme = self.theme
         if theme is not None:
-            self.label.setStyleSheet(f"color: {theme.text}; font-size: 8.5pt;")
+            self.label.setStyleSheet(f"color: {theme.text}; font-size: {DUE_PT}pt;")  # The due dates' size.
         self.owner = owner
         self.label.setText(text)
         self.adjustSize()
@@ -131,7 +130,7 @@ class GlassToolTip(QWidget):
         """Fades the tooltip out and hides it."""
         self.owner = None
         if self.isVisible():
-            self._fade(0.0, self.DELAY_OUT_MS, self.hide)
+            self._fade(0.0, motion.POP_OUT_MS, self.hide)
 
     # --- Routing -------------------------------------------------------------
     def eventFilter(self, obj, ev):
@@ -157,16 +156,13 @@ class GlassToolTip(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         path = QPainterPath()
-        path.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+        path.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), FIELD_RADIUS, FIELD_RADIUS)
         p.fillPath(path, css_color(theme.menu_bg))
         p.setPen(QPen(css_color(theme.separator), 1))
         p.drawPath(path)
 
 
 # --- Popup base --------------------------------------------------------------
-POPUP_RADIUS = 8  # Windows 11's corner rounding, so the drawn border and DWM's clip coincide.
-
-
 class GlassPopup(QWidget):
     """Frameless acrylic popup with rounded corners and the native shadow.
 
@@ -214,15 +210,27 @@ class GlassPopup(QWidget):
             p = QPainter(self)
             p.setRenderHint(QPainter.Antialiasing)
             path = QPainterPath()
-            path.addRoundedRect(QRectF(self.rect()), POPUP_RADIUS, POPUP_RADIUS)
+            path.addRoundedRect(QRectF(self.rect()), WINDOW_RADIUS, WINDOW_RADIUS)
             self._intro.paint(p, path)
 
     def closeEvent(self, e):
         """Leaves a fading ghost grabbed from the screen, so it keeps the acrylic."""
         # A widget render would lack the acrylic.
-        motion.Ghost.from_screen(self, POPUP_RADIUS, motion.POP_OUT_MS)
+        motion.Ghost.from_screen(self, WINDOW_RADIUS, motion.POP_OUT_MS)
         motion.stop(self)
         super().closeEvent(e)
+
+    def _hairline(self) -> QFrame:
+        """Returns a new horizontal separator line for the panel."""
+        line = QFrame(self.panel)
+        line.setObjectName("hairline")
+        return line
+
+    def _attach_hover(self) -> None:
+        """Animates the hover of the popup's buttons; text buttons get the corners of their pressed state."""
+        for button in self.panel.findChildren(QPushButton):
+            button.setProperty("hoverRadius", FIELD_RADIUS)
+        motion.HoverFx.attach(self)
 
     def refit(self) -> None:
         """Resizes the popup to its content, keeping the edge next to the anchor in place."""
@@ -298,7 +306,8 @@ class MiniCalendar(QWidget):
             btn.setCursor(Qt.PointingHandCursor)
             btn.setFixedSize(28, 28)
             btn.setProperty("hoverRadius", 14)
-            btn.setStyleSheet("QToolButton{border:none;background:transparent;}")
+            btn.setStyleSheet("QToolButton{border:none;background:transparent;}"
+                              f"QToolButton:pressed{{background:{theme.pressed};border-radius:14px;}}")
             btn.clicked.connect(lambda _=False, months=step: self.shift(months))
         self.prev_btn.move(self.width() - 62, 3)
         self.next_btn.move(self.width() - 30, 3)
@@ -602,7 +611,7 @@ class DateTimePopup(GlassPopup):
         done_btn.clicked.connect(self._accept)
         buttons.addWidget(done_btn)
         lay.addLayout(buttons)
-        motion.HoverFx.attach(self)
+        self._attach_hover()
 
     def _refit(self) -> None:
         """Refits the popup after the calendar's height changed."""
@@ -620,12 +629,6 @@ class DateTimePopup(GlassPopup):
         btn.show()
         btn._fade = motion.Tween(btn, motion.POP_IN_MS, fx.setOpacity, lambda: btn.setGraphicsEffect(None))
         btn._fade.start()
-
-    def _hairline(self) -> QFrame:
-        """Returns a new horizontal separator line for the panel."""
-        line = QFrame(self.panel)
-        line.setObjectName("hairline")
-        return line
 
     def _accept(self) -> None:
         """Emits the selected day combined with the chosen time."""
@@ -804,17 +807,11 @@ class ColorPopup(GlassPopup):
         self.field.changed.connect(self._dragged)
         self.strip.changed.connect(self._dragged)
         self._sync(update_text=True)
-        motion.HoverFx.attach(self)
+        self._attach_hover()
 
     def color(self) -> QColor:
         """Returns the current colour."""
         return QColor.fromHsvF(self.h, self.s, self.v)
-
-    def _hairline(self) -> QFrame:
-        """Returns a new horizontal separator line for the panel."""
-        line = QFrame(self.panel)
-        line.setObjectName("hairline")
-        return line
 
     def _sync(self, update_text: bool) -> None:
         """Updates the swatch, field and strip and emits ``preview``; optionally the hex text."""

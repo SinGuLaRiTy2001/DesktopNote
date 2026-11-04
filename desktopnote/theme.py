@@ -68,6 +68,15 @@ def tag_color(tint: str) -> str | None:
 
 FONT_FAMILIES = ["Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI"]  # System fonts, by name only.
 
+# --- Corner radii ------------------------------------------------------------
+
+# Corner radii by role, in logical px. Parts with the same role share one; shapes that are
+# circles, pills or concentric insets of another shape derive their own.
+WINDOW_RADIUS = 8  # Notes, popups and About: Windows 11's rounding, so the painted border meets DWM's clip.
+MENU_RADIUS = 12  # Menu panels, which DWM does not round.
+CONTROL_RADIUS = 7  # Hover and pressed backgrounds of a note's buttons and rows.
+FIELD_RADIUS = 6  # Small boxes: popup buttons and fields, the due-date box and tooltips.
+
 
 # --- Theme -------------------------------------------------------------------
 
@@ -331,10 +340,10 @@ def note_qss(t: Theme) -> str:
         border: none; background: transparent; color: {t.text}; padding: 3px 0 1px 6px;
         selection-background-color: {t.accent_fill}; selection-color: white; placeholder-text-color: {t.secondary};
     }}
-    QToolButton {{ border: none; border-radius: 8px; padding: 4px; background: transparent; }}
+    QToolButton {{ border: none; border-radius: {CONTROL_RADIUS}px; padding: 4px; background: transparent; }}
     QToolButton:pressed {{ background: {t.pressed}; }}
     /* font: ItemRow.set_text_scale */
-    QToolButton#dueButton {{ color: {t.secondary}; padding: 0px 0px 2px 6px; border-radius: 6px; }}
+    QToolButton#dueButton {{ color: {t.secondary}; padding: 0px 0px 2px 6px; border-radius: {FIELD_RADIUS}px; }}
     QToolButton#dueButton[state="soon"] {{ color: {t.orange}; }}
     QToolButton#dueButton[state="overdue"] {{ color: {t.red}; }}
     QToolButton#confirmDelete {{ color: {t.red}; font-weight: 600; padding: 4px 10px; }}
@@ -362,26 +371,25 @@ def menu_qss(t: Theme) -> str:
 def popup_qss(t: Theme) -> str:
     """Returns the style sheet of a GlassPopup (date and time picker, colour picker)."""
     return f"""
-    QWidget#popup {{ background: {t.menu_bg}; border: 1px solid {t.separator}; border-radius: 8px; }}
+    QWidget#popup {{ background: {t.menu_bg}; border: 1px solid {t.separator}; border-radius: {WINDOW_RADIUS}px; }}
     QWidget {{ color: {t.text}; }}
     QLabel#secondary {{ color: {t.secondary}; }}
     QFrame#hairline {{ background: {t.separator}; max-height: 1px; min-height: 1px; margin: 2px 4px; }}
     QDateTimeEdit {{
-        background: transparent; border: none; border-radius: 6px; padding: 1px 6px 5px 6px;  /* digits sit low */
+        background: transparent; border: none; border-radius: {FIELD_RADIUS}px;
+        padding: 1px 6px 5px 6px;  /* digits sit low */
         selection-background-color: {t.pressed}; selection-color: {t.text}; color: {t.text};
     }}
     QDateTimeEdit:hover, QDateTimeEdit:focus {{ background: {t.hover}; }}
     QDateTimeEdit::up-button, QDateTimeEdit::down-button {{ width: 0; border: none; }}
-    QPushButton {{ border: none; border-radius: 6px; padding: 4px 8px; background: transparent; }}
+    QPushButton {{ border: none; border-radius: {FIELD_RADIUS}px; padding: 4px 8px; background: transparent; }}
     QPushButton:pressed {{ background: {t.pressed}; }}
-    QPushButton#preset {{ color: {t.secondary}; padding: 4px 6px; }}
-    QPushButton#preset:hover {{ color: {t.text}; }}
     QPushButton#primary {{ color: {t.text}; font-weight: 600; }}
     QToolButton {{ border: none; background: transparent; }}
     QToolButton:pressed {{ background: {t.pressed}; border-radius: 4px; }}
     QPushButton#danger {{ color: {t.red}; }}
     QLineEdit#hex {{
-        background: {t.hover}; border: none; border-radius: 6px; padding: 3px 6px 4px 6px;
+        background: {t.hover}; border: none; border-radius: {FIELD_RADIUS}px; padding: 3px 6px 4px 6px;
         color: {t.text}; selection-background-color: {t.accent_fill}; selection-color: white;
     }}
     """

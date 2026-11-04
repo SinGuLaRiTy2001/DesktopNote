@@ -16,9 +16,9 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__, icons, motion, win_effects
-from .glass import RADIUS, GlassWindow
+from .glass import GlassWindow
 from .i18n import tr
-from .theme import Theme, css_color
+from .theme import WINDOW_RADIUS, Theme, css_color
 from .updates import UpdateFlow
 
 REPO_URL = "https://github.com/SinGuLaRiTy2001/DesktopNote"
@@ -279,7 +279,7 @@ class AboutWindow(GlassWindow):
         if self.closing:
             return
         self.closing = True
-        motion.Ghost.from_screen(self, RADIUS)
+        motion.Ghost.from_screen(self, WINDOW_RADIUS)
         self.close()
 
     # --- Events --------------------------------------------------------------

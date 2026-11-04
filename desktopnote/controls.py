@@ -455,6 +455,7 @@ class TextSizeSlider(QWidget):
     KNOB = 22
     HOVER_GROW, GRAB_GROW = 0.08, 0.16  # Knob scale added on hover and while held.
     GRAB_MS = 140
+    SETTLE_MS = 180  # The knob easing onto a step.
 
     def __init__(self, theme: Theme, scale: float, parent=None):
         """Builds the slider at the ``TEXT_SCALES`` step nearest to ``scale``."""
@@ -517,7 +518,7 @@ class TextSizeSlider(QWidget):
             self.pos_f = start + (index - start) * v
             self.update()
 
-        self._tween = motion.Tween(self, 180, step)
+        self._tween = motion.Tween(self, self.SETTLE_MS, step)
         self._tween.start()
         self._reach(index)
 

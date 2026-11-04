@@ -14,6 +14,12 @@ desktop. They are binding for every change.
 - Every element must be clearly visible in light and dark mode, on white and black backgrounds
   alike; check contrast for all elements in both modes.
 - In light mode, secondary texts (hints, placeholders, due-soon orange) are dark enough to read.
+- Refine, don't redesign: keep the frosted-glass look, palette, fonts and proportions.
+- Parts with the same role look the same (corner radius, padding, hover and pressed shape).
+  Reuse the shared values in `desktopnote/theme.py` instead of new literals; keep the radii
+  Windows dictates and shapes derived from another (circles, pills, concentric insets).
+- Check every visual change in light and dark, English and Chinese, at every text size and at
+  100 %, 125 % and 150 % display scaling; sizes stay in logical pixels.
 
 ## Motion and interaction
 
@@ -31,6 +37,8 @@ desktop. They are binding for every change.
 
 - Icons and text are vertically aligned, in menus and in note items, in English and Chinese.
 - Content inside boxes (e.g. the reminder's date box) is centred correctly.
+- Keep optical corrections (uneven padding for low-sitting glyphs, icon nudges) and their
+  comments; judge alignment by measuring the rendered result, not widget rectangles.
 
 ## Notes and items
 

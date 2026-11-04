@@ -48,7 +48,7 @@ from . import icons, motion
 from .dates import format_due, humanize_delta, reminder_state
 from .i18n import tr
 from .models import Item
-from .theme import BODY_PT, DUE_PT, LIFTED_ALPHA, TITLE_PT, Theme, css_color
+from .theme import BODY_PT, CONTROL_RADIUS, DUE_PT, FIELD_RADIUS, LIFTED_ALPHA, TITLE_PT, Theme, css_color
 
 DOC_MARGIN = 2  # Px between an item editor's edge and its text.
 
@@ -380,7 +380,7 @@ class ItemRow(QWidget):
     CONFIRM_MS = 3000  # The Delete pill shrinks back into the × after this long unclicked.
     CONFIRM_IN_MS, CONFIRM_OUT_MS = 240, 200  # The × stretching into the pill, and back.
     DEL_ICON = 15  # The ×'s icon size.
-    RADIUS = 7
+    RADIUS = CONTROL_RADIUS
     HOVER_STRENGTH = 0.6  # Fraction of theme.hover: softer than a button, whose hover stacks on top.
 
     changed = Signal()
@@ -440,8 +440,7 @@ class ItemRow(QWidget):
             self.lead.setFixedSize(24, 21)
             self.lead.setIconSize(QSize(19, 19))
             self.lead.setCursor(Qt.PointingHandCursor)
-            self.lead.setStyleSheet("QToolButton{padding:0;border-radius:10px;}")
-            self.lead.setProperty("hoverRadius", 10)
+            self._round_lead(10)
             self.lead.clicked.connect(self._toggle_done)
             row.addWidget(self.lead, 0, Qt.AlignTop)
 
@@ -464,7 +463,7 @@ class ItemRow(QWidget):
             self.due_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
             self.due_btn.setIconSize(QSize(12, 12))
             self.due_btn.setCursor(Qt.PointingHandCursor)
-            self.due_btn.setProperty("hoverRadius", 6)
+            self.due_btn.setProperty("hoverRadius", FIELD_RADIUS)  # The radius of its box in note_qss.
             self.due_btn.clicked.connect(lambda: self.dueClicked.emit(self))
             col.addWidget(self.due_btn, 0, Qt.AlignLeft)
         row.addLayout(col, 1)
@@ -666,12 +665,20 @@ class ItemRow(QWidget):
             w += (w - self._icon_px) % 2  # Even leftover: the icon centres on a whole pixel.
             self.lead.setFixedSize(w, h)
             self.lead.setIconSize(QSize(self._icon_px, self._icon_px))
-            self.lead.setProperty("hoverRadius", self.lead.width() / 2 - 2)
+            self._round_lead(self.lead.width() / 2 - 2)
             # Shifts the lead left so its circle starts where text items' text does.
             ink = (w - self._icon_px) // 2 + icons.ink_box("checkbox_off", self._icon_px)[0]
             shift = max(0, min(self.PAD_X, math.floor(ink - DOC_MARGIN + 0.5)))  # Halves round up.
             self._row_layout.setContentsMargins(self.PAD_X - shift, self.PAD_Y, self.PAD_X, self.PAD_Y)
             self.refresh()
+
+    def _round_lead(self, radius: float) -> None:
+        """Gives the lead button's hover and pressed backgrounds the same corner radius.
+
+        Style sheets take whole pixels only, so the pressed background rounds the radius down.
+        """
+        self.lead.setProperty("hoverRadius", radius)
+        self.lead.setStyleSheet(f"QToolButton{{padding:0;border-radius:{math.floor(radius)}px;}}")
 
     def focus_editor(self, at_end: bool = True) -> None:
         """Focuses the editor, optionally moving the cursor to the end of the text."""

@@ -34,7 +34,7 @@ from .models import Item, Note, now_iso
 from .popups import ColorPopup, DateTimePopup
 from .reorder import RowReorder
 from .snapping import SnapMove
-from .theme import BODY_PT, Theme, css_color, glow_color, menu_qss, note_qss, tag_color
+from .theme import BODY_PT, CONTROL_RADIUS, MENU_RADIUS, Theme, css_color, glow_color, menu_qss, note_qss, tag_color
 
 EDGE = 7  # Width in px of the resize-sensitive border.
 CORNER = 16  # Larger grab zone at the corners.
@@ -62,7 +62,7 @@ class GlassMenu(QMenu):
         SWITCH_MS: Duration of the knob animation.
     """
 
-    RADIUS = 12
+    RADIUS = MENU_RADIUS
     SWITCH_W, SWITCH_H = 32, 20
     SWITCH_INSET = 14
     SWITCH_MS = 200
@@ -268,7 +268,7 @@ class _ModeSlot(QWidget):
     clicks halfway through.
     """
 
-    RADIUS = 7  # HoverFx's corner radius, as on the toolbar's other buttons.
+    RADIUS = CONTROL_RADIUS  # HoverFx's corner radius, as on the toolbar's other buttons.
     PENCIL_END, DONE_START = 0.4, 0.35  # Share of the morph by which the pencil is gone / Done starts.
     DONE_SLIDE = 10  # Px Done slides in from the right while it fades in.
 
