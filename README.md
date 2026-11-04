@@ -99,10 +99,10 @@ flowchart LR
   change shows at once; otherwise it changes the data file directly, under the same lock.
 - **Updates.** The updater finds a newer release on GitHub, verifies the download against its
   published SHA-256 checksum, and installs it as a journaled update transaction. Once the app has
-  quit, a script replaces the app files, recording each step in a journal, and keeps the replaced
-  files until the new version confirms that it has started; otherwise it restores them. An
-  interrupted update is rolled back at the next login or start, or finished if the new version
-  had already started.
+  quit, a script replaces the app files and records the transaction state in a journal. The
+  replaced files are kept until the new version confirms that it has started; otherwise, they are
+  restored. An interrupted update is rolled back at the next login or start, or finished if the
+  new version had already started.
 - **Windows integration.** Glass effects, keep-on-top, notifications and autostart use Windows
   APIs; these parts are Windows-only.
 
