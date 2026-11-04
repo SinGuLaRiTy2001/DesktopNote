@@ -205,7 +205,8 @@ class GlassPopup(QWidget):
             self.panel.setStyleSheet(
                 f"QWidget#popup {{ background: rgba({base.red()},{base.green()},{base.blue()},0.5); }}")
             # The acrylic drops out while the popup fades in, so a painted backdrop stands in.
-            self._intro = motion.BackdropFade(self, QColor(base.red(), base.green(), base.blue(), 0xC8))
+            self._intro = motion.BackdropFade(self, QColor(base.red(), base.green(), base.blue(), 0xC8),
+                                              self.theme.acrylic_saturation)
         motion.pop_in(self, on_done=self._intro.hand_over if self._intro else None)
 
     def paintEvent(self, _):
