@@ -346,7 +346,8 @@ def note_qss(t: Theme) -> str:
     QToolButton#dueButton {{ color: {t.secondary}; padding: 0px 0px 2px 6px; border-radius: {FIELD_RADIUS}px; }}
     QToolButton#dueButton[state="soon"] {{ color: {t.orange}; }}
     QToolButton#dueButton[state="overdue"] {{ color: {t.red}; }}
-    QToolButton#confirmDelete {{ color: {t.red}; font-weight: 600; padding: 4px 10px; }}
+    QToolButton#confirmCancel, QToolButton#confirmDelete {{ padding: 4px 10px; }}
+    QToolButton#confirmDelete {{ color: {t.red}; font-weight: 600; }}
     QToolButton#doneButton {{ color: {t.accent}; font-weight: 600; padding: 3px 10px 5px 10px; }}  /* glyphs sit low */
     QLabel#placeholder {{ color: {t.secondary}; }}  /* font: NoteWindow._scale_hint */
     QFrame#separator {{ background: {t.separator}; max-height: 1px; min-height: 1px; }}

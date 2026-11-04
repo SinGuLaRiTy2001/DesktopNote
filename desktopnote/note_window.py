@@ -606,6 +606,7 @@ class NoteWindow(GlassWindow):
         lay.setContentsMargins(8, 4, 2, 2)
         self.confirm_label = QLabel(bar)
         self.btn_cancel = QToolButton(bar)
+        self.btn_cancel.setObjectName("confirmCancel")
         self.btn_cancel.clicked.connect(lambda: self.bottom.setCurrentIndex(0))
         self.btn_confirm_delete = QToolButton(bar)
         self.btn_confirm_delete.setObjectName("confirmDelete")
