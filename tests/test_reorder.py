@@ -14,6 +14,7 @@ from PySide6.QtGui import QMouseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from desktopnote import motion  # noqa: E402
 from desktopnote.models import Item, Note  # noqa: E402
 from desktopnote.note_window import NoteWindow  # noqa: E402
 from desktopnote.theme import LIGHT  # noqa: E402
@@ -156,6 +157,55 @@ class ReorderTest(unittest.TestCase):
         self.settle()
         self.assertEqual(self.order(), ["C", "A", "D"])
 
+
+class OutsideDeleteTest(unittest.TestCase):
+    """An item deleted from outside while a row is dragged (e.g. by the command line)."""
+
+    setUp, tearDown, order, settle, just_past = (ReorderTest.setUp, ReorderTest.tearDown, ReorderTest.order,
+                                                 ReorderTest.settle, ReorderTest.just_past)
+
+    def catch_errors(self):
+        """Collects the exceptions raised in Qt callbacks in self.errors."""
+        self.errors = []
+        hook, sys.excepthook = sys.excepthook, lambda *exc: self.errors.append(exc[1])
+        self.addCleanup(setattr, sys, "excepthook", hook)
+
+    def start(self):
+        """Starts dragging the first row."""
+        self.catch_errors()
+        rows = self.win.rows
+        self.row, self.grab = rows[0], rows[0].mapToGlobal(QPoint(5, 5))
+        self.win.reorder.start(rows, self.row, self.grab)
+
+    def test_a_row_that_has_not_moved_is_dropped_from_the_drag(self):
+        self.start()
+        self.win.forget_item(self.win.note.items.pop(3))  # D: below every slot, so it never glides.
+        self.settle(motion.ITEM_DELETE_MS + 100)
+        self.win.reorder.move(self.grab + QPoint(0, self.just_past(0, 1) - self.row.y()))
+        self.win.reorder.finish()
+        self.settle()
+        self.assertEqual(self.errors, [])
+        self.assertEqual(self.order(), ["B", "A", "C"])
+        self.assertTrue(self.win.content_lay.isEnabled())
+
+    def test_deleting_the_dragged_row_ends_the_drag(self):
+        self.start()
+        self.win.forget_item(self.win.note.items.pop(0))
+        self.settle(motion.ITEM_DELETE_MS + 100)
+        self.assertEqual(self.errors, [])
+        self.assertFalse(self.win.reorder.active())
+        self.assertTrue(self.win.content_lay.isEnabled())
+        self.assertEqual(self.order(), ["B", "C", "D"])
+
+
+    def test_a_row_deleted_while_it_settles(self):
+        self.catch_errors()
+        row = self.win.rows[1]
+        ReorderTest.press_text(self, row, row.HOLD_MS + 300)  # Lifts it with its shadow, then drops it.
+        self.win._remove_row(row, deleted=True)  # The shadow is still settling.
+        self.settle(motion.ITEM_DELETE_MS + 200)
+        self.assertEqual(self.errors, [])
+        self.assertEqual(self.order(), ["A", "C", "D"])
 
 if __name__ == "__main__":
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

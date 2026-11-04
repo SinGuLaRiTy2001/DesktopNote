@@ -653,6 +653,8 @@ class ItemRow(QWidget):
         Its size, softness and offset grow together, so the row visibly rises off the note and
         sinks back.
         """
+        if self._shadow is not None and self.graphicsEffect() is not self._shadow:
+            self._shadow = None  # Replaced, e.g. by the fade of a deleted row.
         if self._shadow is None:
             return
         level = self._rise()

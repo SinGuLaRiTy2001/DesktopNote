@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject, QPoint, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPixmap, QRegion
 from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
+import shiboken6
 
 from . import motion
 
@@ -56,12 +57,14 @@ class RowReorder(QObject):
         self._pointer = QPoint()
         self._dropping = False
         self._glides: dict[ItemRow, motion.WindowGlide] = {}
+        self._watched: set[ItemRow] = set()  # Rows whose deletion _forget() handles.
         self._scroll_timer = QTimer(self)
         self._scroll_timer.timeout.connect(self._auto_scroll)
         self._glass: QPixmap | None = None  # Blurred snapshot of the view, taken when a hold starts.
         self._glass_rect = QRect()  # Where that snapshot was taken, in global coordinates.
         self._frost_timer = QTimer(self)
         self._frost_timer.timeout.connect(self._frost)
+        self._frost_key: tuple | None = None  # What the lifted row's backdrop last showed.
 
     def prepare(self) -> None:
         """Takes the blurred snapshot of the note's glass behind the rows, before a drag.
@@ -83,6 +86,10 @@ class RowReorder(QObject):
         if self._row is not None or row not in rows:
             return
         self._rows, self._row = list(rows), row
+        for r in rows:
+            if r not in self._watched:
+                self._watched.add(r)
+                r.destroyed.connect(lambda _=None, r=r: self._forget(r))
         self._from = self._index = rows.index(row)
         self._top = rows[0].y()
         centres = [r.y() + r.height() / 2 for r in rows]
@@ -162,42 +169,60 @@ class RowReorder(QObject):
         if glide is None:
             glide = motion.WindowGlide(self, self.GLIDE_MS, lambda x, top, w=w: w.move(x, top), motion.EASE_OUT)
             self._glides[w] = glide
-            w.destroyed.connect(lambda _=None, w=w: self._forget(w))
         if glide.is_running() and glide.target == (w.x(), y) and on_done is None:
             return
         glide.start((w.x(), w.y()), (w.x(), y), on_done)
 
     def _forget(self, w: ItemRow) -> None:
-        """Stops tracking a row deleted during the drag or its drop."""
+        """Stops tracking a deleted row; if it is the dragged row, the drag ends without a move."""
+        self._watched.discard(w)
+        if not shiboken6.isValid(self._layout):  # The whole note is being deleted.
+            return
         glide = self._glides.pop(w, None)
         if glide is not None:
             glide.stop()
-        if w in self._rows and w is not self._row:
+        if w is self._row:
+            self._end()
+            self._layout.activate()
+        elif w in self._rows:
             if self._order(self._index).index(w) < self._index:
                 self._index -= 1  # A row above the dragged one's slot is gone.
             self._rows.remove(w)
 
     def _dropped(self) -> None:
         """Ends the drop: reports the new order and hands the rows back to the layout."""
-        row, order = self._row, self._order(self._index)
-        for glide in self._glides.values():
-            glide.stop()
-        self._glides.clear()
+        row, order, moved = self._row, self._order(self._index), self._index != self._from
         self._frost()  # The last view beneath; the row keeps it while it settles.
-        self._frost_timer.stop()
-        self._glass = None
-        self._row, self._rows, self._dropping = None, [], False
-        self._layout.setEnabled(True)
-        if self._index != self._from:
+        self._end()
+        if moved:
             after = order.index(row) + 1
             self.moved.emit(row, order[after] if after < len(order) else None)
         self._layout.activate()
 
+    def _end(self) -> None:
+        """Stops the drag's glides and timers and gives the rows back to the layout."""
+        for glide in self._glides.values():
+            glide.stop()
+        self._glides.clear()
+        self._scroll_timer.stop()
+        self._frost_timer.stop()
+        self._glass, self._frost_key = None, None
+        self._row, self._rows, self._dropping = None, [], False
+        self._layout.setEnabled(True)
+
     def _frost(self) -> None:
-        """Hands the lifted row a blurred view of the glass and the rows beneath it."""
+        """Hands the lifted row a blurred view of the glass and the rows beneath it.
+
+        Nothing is redrawn while the row and the rows beneath it stay where they are.
+        """
         row = self._row
         if row is None or self._glass is None:
             return
+        beneath = [r for r in self._rows if r is not row and r.geometry().intersects(row.geometry())]
+        key = (row.mapToGlobal(QPoint(0, 0)), row.size(), [(r, r.geometry()) for r in beneath])
+        if key == self._frost_key:
+            return
+        self._frost_key = key
         dpr = self._glass.devicePixelRatio()
         pm = QPixmap(round(row.width() * dpr), round(row.height() * dpr))
         pm.setDevicePixelRatio(dpr)
@@ -206,9 +231,8 @@ class RowReorder(QObject):
         at = row.mapToGlobal(QPoint(0, 0)) - self._glass_rect.topLeft()
         p.drawPixmap(QRectF(0, 0, row.width(), row.height()), self._glass,
                      QRectF(at.x() * dpr, at.y() * dpr, row.width() * dpr, row.height() * dpr))
-        for r in self._rows:
-            if r is not row and r.geometry().intersects(row.geometry()):
-                r.render(p, r.pos() - row.pos(), QRegion(), QWidget.DrawChildren)
+        for r in beneath:
+            r.render(p, r.pos() - row.pos(), QRegion(), QWidget.DrawChildren)
         p.end()
         row.set_backdrop(motion.blur(pm, self.FROST_RADIUS))
 
