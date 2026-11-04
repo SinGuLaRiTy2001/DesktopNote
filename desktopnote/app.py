@@ -33,6 +33,7 @@ SAVE_WARN_AFTER = 3  # Failed saves in a row before the tray says so.
 LABEL_CHARS = 32  # Tray-list entries are cut to this many characters.
 LOG_FILE = "desktopnote.log"  # In the data folder; only warnings and errors are written.
 LOG_BYTES = 256 * 1024  # The log is rotated at this size, keeping one older file.
+REQUEST_MS = 2_000  # How long a connection to the local server may take to send its message.
 TOAST_CHECK_MS = 10_000  # After this, a notification that failed is shown as a tray message.
 
 # Windows messages and power-broadcast events handled by _SystemEventFilter.
@@ -691,32 +692,69 @@ def _setup_logging() -> None:
 
 
 def answer(conn: QLocalSocket, handle_command: Callable[[dict], dict], show: Callable[[], None]) -> None:
-    """Answers a connection to the instance's local server.
+    """Answers a connection to the instance's local server once its message has arrived.
 
-    A command-line request (cli.py: COMMAND_PREFIX, JSON, newline) gets a JSON reply line; any
-    other message comes from a second launch and shows the notes.
+    A command-line request (cli.py: COMMAND_PREFIX, a JSON object, newline) gets a JSON reply
+    line; any other message, or none, comes from a second launch and shows the notes. The reply
+    is sent as soon as the request is complete; a connection that has not sent a complete message
+    within REQUEST_MS is closed.
 
     Args:
         conn: The connected QLocalSocket.
         handle_command: Called with a request dict; returns the reply dict.
         show: Called for a second launch.
     """
-    data = b""
-    while conn.waitForReadyRead(300):
-        data += bytes(conn.readAll())
-        if not data.startswith(COMMAND_PREFIX) or data.endswith(b"\n"):
-            break
-    if not data.startswith(COMMAND_PREFIX):
-        show()
-        return
+    data = bytearray()
+    timer = QTimer(conn, singleShot=True, interval=REQUEST_MS)
+
+    def close() -> None:
+        timer.stop()
+        for signal in (conn.readyRead, conn.disconnected, timer.timeout):
+            signal.disconnect()
+        if conn.state() == QLocalSocket.UnconnectedState:
+            conn.deleteLater()
+        else:
+            conn.disconnected.connect(conn.deleteLater)
+            conn.disconnectFromServer()  # Once the reply has been written.
+
+    def received() -> None:
+        data.extend(bytes(conn.readAll()))
+        if COMMAND_PREFIX.startswith(bytes(data)):  # Too short to tell yet.
+            return
+        if not data.startswith(COMMAND_PREFIX):
+            show()
+            close()
+        elif data.endswith(b"\n"):
+            conn.write(json.dumps(_reply(bytes(data[len(COMMAND_PREFIX):]), handle_command),
+                                  ensure_ascii=False).encode("utf-8") + b"\n")
+            close()
+
+    def ended() -> None:  # Disconnected, or REQUEST_MS passed, without a complete message.
+        if not data:
+            show()
+        close()
+
+    conn.readyRead.connect(received)
+    conn.disconnected.connect(ended)
+    timer.timeout.connect(ended)
+    timer.start()
+    if conn.bytesAvailable():
+        received()
+
+
+def _reply(request: bytes, handle_command: Callable[[dict], dict]) -> dict:
+    """Returns the reply to a command-line request, given as JSON bytes; never raises."""
     try:
-        reply = handle_command(json.loads(data[len(COMMAND_PREFIX):]))
+        parsed = json.loads(request)
     except ValueError:
-        reply = {"ok": False, "error": "unreadable request"}
-    conn.write(json.dumps(reply, ensure_ascii=False).encode("utf-8") + b"\n")
-    conn.flush()
-    conn.waitForBytesWritten(1000)
-    conn.disconnectFromServer()
+        parsed = None
+    if not isinstance(parsed, dict):
+        return {"ok": False, "error": "unreadable request"}
+    try:
+        return handle_command(parsed)
+    except Exception as exc:  # Any error becomes an error reply.
+        log.exception("Command failed: %r", parsed)
+        return {"ok": False, "error": f"the command failed: {exc}"}
 
 
 def main() -> int:
@@ -750,7 +788,8 @@ def main() -> int:
 
     QLocalServer.removeServer(SERVER_NAME)
     server = QLocalServer()
-    server.listen(SERVER_NAME)
+    if not server.listen(SERVER_NAME):
+        log.error("The command line and second launches cannot reach this instance: %s", server.errorString())
 
     app = DesktopNoteApp(qapp)
 

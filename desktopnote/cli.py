@@ -15,7 +15,7 @@ It looks at notes, makes notes, and adds, changes, ticks or deletes items:
 Every command prints one JSON object, {"ok": true, ...} or {"ok": false, "error": ...}, and
 exits with 0, 1 on an error, or 2 for invalid arguments. While DesktopNote runs, the running app
 carries out the command, so the change shows at once; otherwise the data file is updated
-directly. In a source checkout it runs as ``python -m desktopnote.cli``.
+directly, one command at a time. In a source checkout it runs as ``python -m desktopnote.cli``.
 """
 from __future__ import annotations
 
@@ -32,6 +32,8 @@ from .instance import COMMAND_PREFIX, SERVER_NAME, is_running
 CONNECT_MS = 300
 REPLY_MS = 5000
 STARTING_WAIT_S = 5.0  # How long to wait for an instance that is still starting.
+NO_ANSWER = ("DesktopNote did not answer in time; it may still carry out the command, so check with "
+             "`list` before trying again")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -90,21 +92,36 @@ def send(request: dict) -> dict | None:
     try:
         return json.loads(reply)
     except ValueError:  # Nothing, or not JSON (e.g. an older DesktopNote, which only shows its notes).
-        return {"ok": False, "error": "DesktopNote did not answer"}
+        return {"ok": False, "error": NO_ANSWER}
 
 
-def run_offline(request: dict) -> dict:
-    """Carries out a request on the data file, for when the app is not running."""
+def run_offline(request: dict) -> dict | None:
+    """Carries out a request on the data file, for when the app is not running.
+
+    The data folder is locked from loading to saving: commands run at the same time take turns,
+    and the app waits for them before it loads.
+
+    Returns:
+        The result, or None if the app started meanwhile and should carry out the request.
+    """
     from .storage import Store  # Only needed here.
 
     store = Store()
-    store.load()
     try:
-        result, change = commands.run(request, store.notes)
+        with store.locked():
+            if is_running():
+                return None
+            store.load()
+            result, change = commands.run(request, store.notes)
+            if change is not None:
+                store.save()
     except commands.CommandError as exc:
         return {"ok": False, "error": str(exc)}
-    if change is not None:
-        store.save()
+    except OSError as exc:
+        return {"ok": False, "error": f"cannot read or write the notes: {exc}"}
+    if store.set_aside:
+        names = ", ".join(path.name for path in store.set_aside)
+        result["warning"] = f"notes.json could not be read and was kept as {names}"
     return result
 
 
@@ -125,6 +142,8 @@ def main(argv: list[str] | None = None) -> int:
     result = send(request)
     if result is None:
         result = run_offline(request)
+    if result is None:
+        result = send(request) or {"ok": False, "error": NO_ANSWER}
     print(json.dumps(result, ensure_ascii=False))
     return 0 if result.get("ok") else 1
 

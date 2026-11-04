@@ -130,7 +130,9 @@ desktopnote-cli delete <item id>                                 # delete one it
 A note is named by its id or its title, so notes without a title work too. `list` prints every
 note with its items, and `done <item id>` is short for `edit <item id> --done`. Every command
 prints one JSON object, `{"ok": true, ...}` or `{"ok": false, "error": "..."}`, and exits with 0,
-1 on an error or 2 for invalid arguments.
+1 on an error or 2 for invalid arguments. Commands run at the same time take turns. If the error
+says DesktopNote did not answer in time, check with `list` before trying again: the change may
+still be made.
 
 ## Data
 

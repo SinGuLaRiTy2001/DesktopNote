@@ -1,6 +1,7 @@
 """Storage tests: unreadable files are kept, bad values do not stop loading, saves are robust."""
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,6 +15,7 @@ from desktopnote import storage  # noqa: E402
 from desktopnote.models import Item, Note, Settings  # noqa: E402
 from desktopnote.storage import Store  # noqa: E402
 
+ROOT = Path(__file__).resolve().parents[1]
 GOOD = {"version": 1, "settings": {"first_run": False, "language": "en"},
         "notes": [{"title": "Keep", "items": [{"type": "todo", "text": "Milk"}]}]}
 
@@ -177,6 +179,23 @@ class SaveTest(StorageTestCase):
             with self.assertRaises(PermissionError):
                 store.save()
         self.assertEqual(list(self.folder.glob("*.tmp")), [])
+
+
+class ConcurrentCommandLineTest(unittest.TestCase):
+    """Command lines run at the same time on the data file take turns: every change is kept."""
+
+    def test_parallel_adds(self):
+        with tempfile.TemporaryDirectory() as home:
+            env = {**os.environ, "DESKTOPNOTE_HOME": home, "PYTHONIOENCODING": "utf-8"}
+            procs = [subprocess.Popen([sys.executable, "-m", "desktopnote.cli", "add", "todo", f"item {i}"], cwd=ROOT,
+                                      env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
+                     for i in range(8)]
+            outputs = [proc.communicate(timeout=120) for proc in procs]
+            for out, err in outputs:
+                self.assertTrue(json.loads(out)["ok"], err)
+            notes = json.loads((Path(home) / "notes.json").read_text(encoding="utf-8"))["notes"]
+            self.assertEqual(len(notes), 1, "one Inbox, not one per command")
+            self.assertEqual(sorted(i["text"] for i in notes[0]["items"]), sorted(f"item {i}" for i in range(8)))
 
 
 if __name__ == "__main__":

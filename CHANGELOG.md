@@ -20,6 +20,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Memory use grew while hovering over notes and with each opening of a note's menu.
 - A notes file with unexpected content could keep DesktopNote from starting, and values a newer
   version added were lost on saving.
+- Command-line calls run at the same time could fail without a JSON answer.
 - Deleting an item while another item was being dragged, or right after a drop, could leave the
   note's rows unable to move.
 
