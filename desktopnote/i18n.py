@@ -40,6 +40,14 @@ _STRINGS: dict[str, tuple[str, str]] = {
                       "DesktopNote cannot undo an interrupted update because the update files in {folder} are "
                       "incomplete.\n\nDownload DesktopNote again from its releases page and extract it into this "
                       "folder. Your notes are not affected."),
+    # Starting while the notes are in use.
+    "startup.busy": ("其他程序正在使用记事板（例如尚未完成的 DesktopNote 命令），在其完成之前 DesktopNote 不会打开"
+                     "它们。\n\n请重试，或退出后稍后再启动 DesktopNote。数据文件夹：{folder}",
+                     "Your notes are in use by another program, for example a DesktopNote command that has not "
+                     "finished. DesktopNote does not open them until they are free.\n\nRetry, or quit "
+                     "and start DesktopNote again later. Data folder: {folder}"),
+    "startup.error": ("DesktopNote 无法打开数据文件夹 {folder}：{error}",
+                      "DesktopNote cannot open its data folder {folder}: {error}"),
     # About window.
     "about.version": ("版本 {version}", "Version {version}"),
     "about.developer": ("由文简使用 Claude Code 开发", "Developed by Jian Wen with Claude Code"),

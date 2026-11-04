@@ -9,10 +9,10 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from typing import Callable
 
-from PySide6.QtCore import QAbstractNativeEventFilter, QLocale, QRect, Qt, QTimer, QUrl
+from PySide6.QtCore import QAbstractNativeEventFilter, QElapsedTimer, QEventLoop, QLocale, QRect, Qt, QTimer, QUrl
 from PySide6.QtGui import QCursor, QDesktopServices, QFont, QGuiApplication
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
-from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidgetAction
+from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidgetAction
 
 from . import __version__, commands, i18n, icons, motion, win_effects
 from .about import AboutWindow
@@ -30,6 +30,8 @@ from .updates import UpdateFlow, confirm_started, ready_to_start
 log = logging.getLogger(__name__)
 
 SAVE_DELAY_MS = 400
+LOCK_RETRY_MS = 100  # At startup, how often the data folder's lock is tried.
+LOCK_WAIT_MS = 10_000  # At startup, how long to wait for the lock before asking what to do.
 SAVE_RETRY_MS = 5_000  # After a failed save.
 SAVE_WARN_AFTER = 3  # Failed saves in a row before the tray says so.
 LABEL_CHARS = 32  # Tray-list entries are cut to this many characters.
@@ -78,7 +80,7 @@ class DesktopNoteApp:
 
     Attributes:
         qapp: The running QApplication.
-        store: Notes and settings, loaded from disk.
+        store: Notes and settings, loaded from disk while holding the data folder's lock.
         windows: Open note windows by note id.
         about: The last About window opened, or None; see _about_open().
         theme: The current Theme (light or dark).
@@ -90,15 +92,23 @@ class DesktopNoteApp:
 
     NEW_NOTE_W, NEW_NOTE_H = commands.NEW_NOTE_W, commands.NEW_NOTE_H
 
-    def __init__(self, qapp: QApplication):
+    def __init__(self, qapp: QApplication, store: Store | None = None):
+        """Initialises the app on loaded notes.
+
+        Args:
+            qapp: The running QApplication.
+            store: The notes, loaded with open_store(); without it they are loaded here, waiting up
+                to storage.LOCK_WAIT_S for the data folder's lock.
+
+        Raises:
+            storage.DataFolderBusy: If no store is given and the lock stays taken.
+        """
         self.qapp = qapp
-        self.store = Store()
-        try:
-            with self.store.locked():
-                self.store.load()
-        except OSError as exc:  # The lock could not be taken.
-            log.warning("data folder lock: %s", exc)
-            self.store.load()
+        if store is None:
+            store = Store()
+            with store.locked():
+                store.load()
+        self.store = store
         settings = self.store.settings
         settings.text_scale = nearest_text_scale(settings.text_scale)  # The steps may have changed since it was saved.
         if settings.first_run:
@@ -736,6 +746,90 @@ def _setup_logging() -> None:
     sys.excepthook = log_unhandled
 
 
+Answer = Callable[[bool], None]  # Takes whether to keep waiting for the data folder.
+
+
+def open_store(wait_ms: int = LOCK_WAIT_MS, ask: Callable[[str, Answer], Callable[[], None]] | None = None,
+               error: Callable[[str], None] | None = None) -> Store | None:
+    """Loads the notes once the data folder's lock is free, without blocking the event loop.
+
+    The lock is tried every LOCK_RETRY_MS. After wait_ms without it, the user is asked whether to
+    keep waiting or quit; the lock is still tried meanwhile, and the question is withdrawn as soon
+    as it is free. Nothing is read or written without the lock.
+
+    Args:
+        wait_ms: How long to wait before asking.
+        ask: Called with the data folder and an answer callback, which takes True to keep waiting
+            and False to quit; returns a function that withdraws the question. Defaults to a
+            Retry/Quit dialog.
+        error: Shows why the data folder cannot be opened; defaults to a dialog.
+
+    Returns:
+        The loaded store, or None if the user quit or the data folder cannot be opened.
+    """
+    i18n.set_language("zh" if QLocale.system().language() == QLocale.Language.Chinese else "en")
+    store, outcome, question = Store(), {}, {}
+    loop, clock = QEventLoop(), QElapsedTimer()
+    timer = QTimer(interval=LOCK_RETRY_MS)
+    folder = str(store.path.parent)
+
+    def finish(result: Store | None) -> None:
+        if "withdraw" in question:
+            question.pop("withdraw")()
+        outcome["store"] = result
+        timer.stop()
+        loop.quit()
+
+    def answer(keep_waiting: bool) -> None:
+        question.clear()
+        if keep_waiting:
+            clock.restart()
+        else:
+            log.error("The data folder %s stayed in use; DesktopNote did not start", folder)
+            finish(None)
+
+    def attempt() -> None:
+        try:
+            if store.try_load():
+                finish(store)
+                return
+        except OSError as exc:
+            log.error("Opening the data folder failed: %s", exc)
+            (error or _show_error)(tr("startup.error", folder=folder, error=exc))
+            finish(None)
+            return
+        if clock.elapsed() >= wait_ms and not question:
+            question["withdraw"] = (ask or _ask_retry)(folder, answer)
+
+    timer.timeout.connect(attempt)
+    clock.start()
+    attempt()
+    if "store" not in outcome:
+        timer.start()
+        loop.exec()
+    return outcome["store"]
+
+
+def _ask_retry(folder: str, answer: Answer) -> Callable[[], None]:
+    """Shows a Retry/Quit dialog without waiting for it; see open_store's ask."""
+    box = QMessageBox(QMessageBox.Warning, "DesktopNote", tr("startup.busy", folder=folder),
+                      QMessageBox.Retry | QMessageBox.Cancel)
+    box.button(QMessageBox.Cancel).setText(tr("tray.quit"))
+    box.buttonClicked.connect(lambda button: answer(box.standardButton(button) == QMessageBox.Retry))
+    box.show()
+
+    def withdraw() -> None:
+        box.buttonClicked.disconnect()
+        box.close()
+
+    return withdraw
+
+
+def _show_error(text: str) -> None:
+    """Shows why DesktopNote cannot start."""
+    QMessageBox(QMessageBox.Critical, "DesktopNote", text, QMessageBox.Ok).exec()
+
+
 def answer(conn: QLocalSocket, handle_command: Callable[[dict], dict], show: Callable[[], None]) -> None:
     """Answers a connection to the instance's local server once its message has arrived.
 
@@ -833,12 +927,16 @@ def main() -> int:
     font.setPointSizeF(10)
     qapp.setFont(font)
 
+    store = open_store()  # Before the server and any window: without the notes, nothing starts.
+    if store is None:
+        return 1
+
     QLocalServer.removeServer(SERVER_NAME)
     server = QLocalServer()
     if not server.listen(SERVER_NAME):
         log.error("The command line and second launches cannot reach this instance: %s", server.errorString())
 
-    app = DesktopNoteApp(qapp)
+    app = DesktopNoteApp(qapp, store)
 
     server.newConnection.connect(lambda: answer(server.nextPendingConnection(), app.handle_command, app.show_all))
     app.start()

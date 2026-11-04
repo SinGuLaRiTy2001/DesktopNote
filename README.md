@@ -143,6 +143,9 @@ version kept as `notes.json.bak` and the first version of each of the last seven
 `backups\`. To go back to one of them, quit DesktopNote and copy it over `notes.json`. To move your
 notes to another computer, copy this folder.
 
+If another program, such as a command-line call, is using the notes when DesktopNote starts, it
+waits until they are free; after 10 seconds it asks whether to keep waiting or quit.
+
 A file that cannot be read is never overwritten: it is renamed to `notes-unreadable-<time>.json`,
 the notes come from the backup if possible, and the tray icon says so. Warnings and errors, if
 any, are logged to `desktopnote.log`, and `DesktopNote.ico` is the icon on DesktopNote's

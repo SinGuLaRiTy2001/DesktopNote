@@ -25,6 +25,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A notes file with unexpected content could keep DesktopNote from starting, and values a newer
   version added were lost on saving.
 - Command-line calls run at the same time could fail without a JSON answer.
+- DesktopNote could read the notes while a command-line call was still changing them, if both
+  started at the same moment. It now waits until the notes are free, and after 10 seconds asks
+  whether to keep waiting.
 - Checking for or downloading an update could hang without an end.
 - An update could leave files half moved when one of them was in use.
 - A note whose top bar was off every screen could not be moved; notes now also come back on

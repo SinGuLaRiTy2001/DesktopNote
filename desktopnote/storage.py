@@ -10,7 +10,7 @@ import tempfile
 import time
 from datetime import date, datetime
 from pathlib import Path
-from typing import Iterator
+from typing import IO, Iterator
 
 from .models import Note, Settings
 
@@ -27,6 +27,12 @@ SNAPSHOT_FOLDER = "backups"  # One copy of notes.json per day, in the data folde
 SNAPSHOT_DAYS = 7  # How many daily copies are kept.
 REPLACE_TRIES = 3  # Attempts at replacing notes.json while another program holds it open.
 REPLACE_WAIT_S = 0.1
+LOCK_WAIT_S = 10.0  # How long locked() waits for another process to release the data folder.
+LOCK_POLL_S = 0.05
+
+
+class DataFolderBusy(OSError):
+    """Another process holds the data folder's lock."""
 
 
 def data_dir() -> Path:
@@ -72,6 +78,7 @@ class Store:
         self._extra: dict = {}  # Top-level keys this version does not know.
         self._stuck: list[Path] = []  # Unreadable files that could not be moved aside.
         self._snapshot_day: date | None = None
+        self._lock: IO[bytes] | None = None  # The lock file while this store holds the lock.
 
     @property
     def backup_path(self) -> Path:
@@ -79,23 +86,63 @@ class Store:
         return self.path.with_suffix(".json.bak")
 
     @contextlib.contextmanager
-    def locked(self) -> Iterator[None]:
-        """Holds the data folder's lock while the block runs; other processes wait for it.
+    def locked(self, timeout_s: float | None = None) -> Iterator[None]:
+        """Holds the data folder's lock while the block runs, waiting for another process to release it.
+
+        Args:
+            timeout_s: How long to wait; defaults to LOCK_WAIT_S.
 
         Raises:
-            OSError: If another process holds the lock for about 10 seconds.
+            DataFolderBusy: If another process still holds the lock after timeout_s.
+            OSError: If the lock file cannot be opened.
         """
-        with open(self.path.parent / LOCK_FILE, "a+b") as fh:
-            if msvcrt is None:
-                yield
-                return
+        deadline = time.monotonic() + (LOCK_WAIT_S if timeout_s is None else timeout_s)
+        while not self._try_lock():
+            if time.monotonic() >= deadline:
+                raise DataFolderBusy(f"another program is using {self.path.parent}")
+            time.sleep(LOCK_POLL_S)
+        try:
+            yield
+        finally:
+            self._unlock()
+
+    def try_load(self) -> bool:
+        """Loads notes and settings if the data folder's lock is free now, without waiting.
+
+        Returns:
+            Whether the lock was free; if not, nothing was read.
+
+        Raises:
+            OSError: If the lock file cannot be opened.
+        """
+        if not self._try_lock():
+            return False
+        try:
+            self.load()
+        finally:
+            self._unlock()
+        return True
+
+    def _try_lock(self) -> bool:
+        """Takes the data folder's lock if it is free; returns whether it was."""
+        fh = open(self.path.parent / LOCK_FILE, "a+b")
+        if msvcrt is not None:
             fh.seek(0)
-            msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)  # Retries once a second, 10 times.
             try:
-                yield
-            finally:
-                fh.seek(0)
-                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError:
+                fh.close()
+                return False
+        self._lock = fh
+        return True
+
+    def _unlock(self) -> None:
+        """Releases the data folder's lock."""
+        fh, self._lock = self._lock, None
+        if msvcrt is not None:
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        fh.close()
 
     # --- Loading -------------------------------------------------------------
     def load(self) -> None:

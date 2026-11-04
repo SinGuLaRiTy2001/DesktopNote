@@ -104,7 +104,7 @@ def run_offline(request: dict) -> dict | None:
     Returns:
         The result, or None if the app started meanwhile and should carry out the request.
     """
-    from .storage import Store  # Only needed here.
+    from .storage import DataFolderBusy, Store  # Only needed here.
 
     store = Store()
     try:
@@ -117,6 +117,9 @@ def run_offline(request: dict) -> dict | None:
                 store.save()
     except commands.CommandError as exc:
         return {"ok": False, "error": str(exc)}
+    except DataFolderBusy:
+        return {"ok": False, "error": "the notes are in use by another program, e.g. a DesktopNote that is "
+                                      "starting or another command; try again"}
     except OSError as exc:
         return {"ok": False, "error": f"cannot read or write the notes: {exc}"}
     if store.set_aside:
