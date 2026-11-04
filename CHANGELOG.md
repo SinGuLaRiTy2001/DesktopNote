@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Reminders whose text contains quotation marks such as ’ or ‘’ showed no notification.
+- Text in a reminder could run as a command when its notification was shown.
+
 ## [1.0.0rc4] - 2026-11-03
 
 ### Changed

@@ -31,6 +31,7 @@ SAVE_DELAY_MS = 400
 LABEL_CHARS = 32  # Tray-list entries are cut to this many characters.
 LOG_FILE = "desktopnote.log"  # In the data folder; only warnings and errors are written.
 LOG_BYTES = 256 * 1024  # The log is rotated at this size, keeping one older file.
+TOAST_CHECK_MS = 10_000  # After this, a notification that failed is shown as a tray message.
 
 # Windows messages and power-broadcast events handled by _SystemEventFilter.
 WM_QUERYENDSESSION = 0x0011
@@ -434,10 +435,26 @@ class DesktopNoteApp:
                     fired = True
                     heading = win.note.title.strip() or tr("reminder.heading")
                     text = item.text or tr("reminder.fallback")
-                    if not win_effects.show_toast(heading, text):  # Falls back to a tray message.
-                        self.tray.showMessage(heading, text, icons.app_icon(), 8000)
+                    self._notify(heading, text)
         if fired:
             self.schedule_save()
+
+    def _notify(self, heading: str, text: str) -> None:
+        """Shows a Windows notification, or a tray message if the notification fails."""
+        proc = win_effects.show_toast(heading, text)
+        if proc is None:
+            self._tray_message(heading, text)
+            return
+
+        def check() -> None:
+            if proc.poll() not in (None, 0):  # Exited with an error: no notification was shown.
+                self._tray_message(heading, text)
+
+        QTimer.singleShot(TOAST_CHECK_MS, check)
+
+    def _tray_message(self, heading: str, text: str) -> None:
+        """Shows a message from the tray icon."""
+        self.tray.showMessage(heading, text, icons.app_icon(), 8000)
 
     # --- Tray ----------------------------------------------------------------
 

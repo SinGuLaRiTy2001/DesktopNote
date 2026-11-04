@@ -8,6 +8,10 @@ from __future__ import annotations
 import ctypes
 import sys
 from ctypes import POINTER, Structure, byref, c_int, sizeof, wintypes
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import subprocess
 
 IS_WINDOWS = sys.platform == "win32"
 WIN_BUILD = sys.getwindowsversion().build if IS_WINDOWS else 0
@@ -431,13 +435,15 @@ def register_app_id(icon: str) -> None:
 
 
 CREATE_NO_WINDOW = 0x08000000
-# Shows the toast in TOAST_XML under APP_ID, through the Windows Runtime notification API.
-_TOAST_SCRIPT = """
+# Shows the toast in $env:DESKTOPNOTE_TOAST_XML under $env:DESKTOPNOTE_TOAST_APP_ID, through the
+# Windows Runtime notification API. The script holds no data of its own; it exits with 1 if the
+# toast cannot be shown.
+_TOAST_SCRIPT = """$ErrorActionPreference = 'Stop'
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
 $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
-$xml.LoadXml(TOAST_XML)
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier(TOAST_APP_ID).Show(
+$xml.LoadXml($env:DESKTOPNOTE_TOAST_XML)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($env:DESKTOPNOTE_TOAST_APP_ID).Show(
     [Windows.UI.Notifications.ToastNotification]::new($xml))
 """
 
@@ -451,28 +457,29 @@ def toast_xml(title: str, text: str) -> str:
             "</binding></visual></toast>")
 
 
-def show_toast(title: str, text: str) -> bool:
+def show_toast(title: str, text: str) -> subprocess.Popen | None:
     """Shows a Windows notification with ``title`` and ``text`` from a hidden PowerShell process.
 
-    Windows shows it under the name and icon set by register_app_id().
+    Windows shows it under the name and icon set by register_app_id(). The title and text reach
+    PowerShell in environment variables, never as part of the script.
 
     Returns:
-        Whether the notification could be handed to Windows.
+        The PowerShell process, which exits with a non-zero code if the notification was not
+        shown, or None if it could not be started.
     """
     if not IS_WINDOWS:
-        return False
+        return None
     import base64
+    import os
     import subprocess
 
-    quote = lambda value: "'" + value.replace("'", "''") + "'"  # noqa: E731
-    script = _TOAST_SCRIPT.replace("TOAST_XML", quote(toast_xml(title, text))).replace("TOAST_APP_ID", quote(APP_ID))
+    env = {**os.environ, "DESKTOPNOTE_TOAST_XML": toast_xml(title, text), "DESKTOPNOTE_TOAST_APP_ID": APP_ID}
     try:
-        subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand",
-                          base64.b64encode(script.encode("utf-16-le")).decode("ascii")],
-                         creationflags=CREATE_NO_WINDOW, close_fds=True)
+        return subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand",
+                                 base64.b64encode(_TOAST_SCRIPT.encode("utf-16-le")).decode("ascii")],
+                                env=env, creationflags=CREATE_NO_WINDOW, close_fds=True)
     except OSError:
-        return False
-    return True
+        return None
 
 
 def set_autostart(enabled: bool) -> None:
