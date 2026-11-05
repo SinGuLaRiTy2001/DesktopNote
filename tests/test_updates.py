@@ -193,7 +193,7 @@ class UpdaterTest(unittest.TestCase):
             ("no DesktopNote.exe", zip_with("readme.txt"), None, None,
              [*prepared, ("failed", "the release does not contain DesktopNote.exe")]),
             ("unexpected error while checking", RELEASE_ZIP, None,
-             mock.patch.object(updates.hashlib, "sha256", side_effect=RuntimeError("boom")),
+             mock.patch.object(updates, "_sha256", side_effect=RuntimeError("boom")),
              [("stage", "verifying"), ("failed", "the update could not be prepared")]),
             ("unexpected error while preparing", RELEASE_ZIP, None,
              mock.patch.object(updates, "prepare", side_effect=ValueError("boom")),

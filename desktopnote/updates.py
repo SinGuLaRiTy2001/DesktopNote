@@ -14,7 +14,6 @@ Only a release build (PyInstaller) installs updates; from source, the release pa
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -29,7 +28,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QLocale, QObject, QUrl, Signal
+from PySide6.QtCore import QByteArray, QCryptographicHash, QLocale, QObject, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
@@ -480,6 +479,11 @@ def ready_to_start(folder: Path | None = None, message=None) -> bool:
     return False
 
 
+def _sha256(data: bytes) -> str:
+    """Returns the SHA-256 of data as lower-case hex."""
+    return bytes(QCryptographicHash.hash(QByteArray(data), QCryptographicHash.Sha256).toHex()).decode("ascii")
+
+
 class UpdateChecker(QObject):
     """Asks GitHub for the newest release that counts as an update for this version.
 
@@ -596,7 +600,7 @@ class Updater(QObject):
         with its traceback and reported as "the update could not be prepared".
         """
         try:
-            if hashlib.sha256(data).hexdigest() != self._expected:
+            if _sha256(data) != self._expected:
                 self.failed.emit("the download does not match its checksum")
                 return
             self.stage.emit("preparing")

@@ -1,4 +1,7 @@
-"""App-wide tests: the string table, one instance per data folder, and the version."""
+"""App-wide tests: the string table, one instance per data folder, the version, and the release
+build's module list.
+"""
+import ast
 import os
 import subprocess
 import sys
@@ -51,6 +54,27 @@ class VersionTest(unittest.TestCase):
         import desktopnote
         declared = tomllib.loads((_support.ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
         self.assertEqual(desktopnote.__version__, declared)
+
+
+class ReleaseBuildTest(unittest.TestCase):
+    """The release build leaves out standard-library modules (UNUSED_STDLIB in scripts/build.py);
+    the app imports none of them."""
+
+    def test_the_app_imports_no_module_the_build_leaves_out(self):
+        build = ast.parse((_support.ROOT / "scripts" / "build.py").read_text(encoding="utf-8"))
+        left_out = next(set(ast.literal_eval(node.value)) for node in build.body if isinstance(node, ast.Assign)
+                        and any(getattr(target, "id", "") == "UNUSED_STDLIB" for target in node.targets))
+        for path in sorted((_support.ROOT / "desktopnote").glob("*.py")):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                    names = [node.module]
+                else:
+                    continue
+                for name in names:
+                    with self.subTest(module=path.name, imports=name):
+                        self.assertNotIn(name.split(".")[0], left_out, f"{path.name} imports {name}")
 
 
 if __name__ == "__main__":
