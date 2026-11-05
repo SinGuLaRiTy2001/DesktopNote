@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -15,8 +16,10 @@ from PySide6.QtGui import QCloseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel  # noqa: E402
 
-from desktopnote import __version__, about, i18n  # noqa: E402
+from desktopnote import __version__, about, i18n, win_effects  # noqa: E402
 from desktopnote.about import AboutWindow  # noqa: E402
+from desktopnote.models import Note  # noqa: E402
+from desktopnote.note_window import NoteWindow  # noqa: E402
 from desktopnote.theme import DARK, LIGHT  # noqa: E402
 from desktopnote.updates import Release, UpdateFlow  # noqa: E402
 
@@ -118,6 +121,49 @@ class AboutWindowTest(unittest.TestCase):
         win.setAttribute(Qt.WA_DeleteOnClose, False)  # Kept to look at it afterwards.
         QApplication.sendEvent(win, QCloseEvent())  # As Alt+F4 sends it.
         self.assertTrue(win.closing)
+
+
+class HandOverTest(unittest.TestCase):
+    """Closing About with its button or Esc activates the closest note behind it in the z-order.
+
+    Nothing is activated when another app's window comes before that note.
+    """
+
+    def setUp(self):
+        self.note = NoteWindow(Note(w=280, h=220), LIGHT, 60, 1.0)
+        self.note.show()
+        self.win = AboutWindow(LIGHT, UpdateFlow(__version__, Path(tempfile.mkdtemp())))
+        self.win.show()  # After the note: About closes when another window becomes active.
+        _app.processEvents()
+        self.assertFalse(self.win.closing)
+        self.addCleanup(self.note.close)
+        self.addCleanup(lambda: self.win.closing or self.win.close())
+
+    def dismiss(self, behind, topmost=(), hand_over=True):
+        """Closes About in front of the given windows; returns whether a note was activated.
+
+        Args:
+            behind: The window handles behind About in the z-order, closest first.
+            topmost: The handles among them that are always on top.
+            hand_over: Passed to AboutWindow.dismiss.
+        """
+        with (mock.patch.object(win_effects, "windows_behind", return_value=list(behind)),
+              mock.patch.object(win_effects, "is_topmost", side_effect=lambda hwnd: hwnd in topmost),
+              mock.patch.object(NoteWindow, "activateWindow") as activate):
+            self.win.dismiss(hand_over=hand_over)
+        return activate.called
+
+    def test_closest_note_behind_is_activated(self):
+        self.assertTrue(self.dismiss([int(self.note.winId())]))
+
+    def test_other_apps_topmost_windows_are_skipped(self):
+        self.assertTrue(self.dismiss([111, int(self.note.winId())], topmost={111}))
+
+    def test_notes_behind_another_app_stay_behind(self):
+        self.assertFalse(self.dismiss([222, int(self.note.winId())]))
+
+    def test_a_click_elsewhere_hands_nothing_over(self):
+        self.assertFalse(self.dismiss([int(self.note.winId())], hand_over=False))
 
 
 if __name__ == "__main__":

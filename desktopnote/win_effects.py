@@ -125,6 +125,15 @@ if IS_WINDOWS:
     _SetWindowLong = _user32.SetWindowLongW
     _SetWindowLong.argtypes = [wintypes.HWND, c_int, ctypes.c_long]
     _SetWindowLong.restype = ctypes.c_long
+    _GetWindow = _user32.GetWindow
+    _GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+    _GetWindow.restype = wintypes.HWND
+    _IsWindowVisible = _user32.IsWindowVisible
+    _IsWindowVisible.argtypes = [wintypes.HWND]
+    _IsWindowVisible.restype = wintypes.BOOL
+    _DwmGetWindowAttribute = _dwmapi.DwmGetWindowAttribute
+    _DwmGetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+    _DwmGetWindowAttribute.restype = ctypes.c_long
 else:  # pragma: no cover
     _SetWCA = None
     _SetWindowPos = None
@@ -134,12 +143,16 @@ else:  # pragma: no cover
     _EnumDisplayMonitors = None
     _GetWindowLong = None
     _SetWindowDisplayAffinity = None
+    _GetWindow = None
 
 HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
 GWL_EXSTYLE = -20
 WS_EX_TRANSPARENT = 0x00000020
+WS_EX_TOPMOST = 0x00000008
 WDA_NONE, WDA_EXCLUDEFROMCAPTURE = 0x00, 0x11
 SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE, SWP_SHOWWINDOW = 0x0001, 0x0002, 0x0004, 0x0010, 0x0040
+GW_HWNDNEXT = 2
+DWMWA_CLOAKED = 14
 
 
 def _abgr(rgba: int) -> int:
@@ -247,6 +260,23 @@ def place_below(hwnd: int, above: int) -> bool:
     return bool(_SetWindowPos(hwnd, above, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE))
 
 
+def windows_behind(hwnd: int) -> list[int]:
+    """Returns the visible top-level windows behind a window in the z-order, closest first.
+
+    Windows that DWM cloaks (does not draw, although they are marked visible) are left out.
+    """
+    if _GetWindow is None:
+        return []
+    found, behind = [], _GetWindow(hwnd, GW_HWNDNEXT)
+    while behind:
+        cloaked = wintypes.DWORD(0)
+        _DwmGetWindowAttribute(behind, DWMWA_CLOAKED, byref(cloaked), sizeof(cloaked))
+        if _IsWindowVisible(behind) and not cloaked.value:
+            found.append(int(behind))
+        behind = _GetWindow(behind, GW_HWNDNEXT)
+    return found
+
+
 def set_capture_excluded(hwnd: int, on: bool) -> bool:
     """Leaves a window out of screen grabs (on), which then show what is behind it, or not."""
     if _SetWindowDisplayAffinity is None:
@@ -266,6 +296,11 @@ def set_click_through(hwnd: int, on: bool) -> bool:
     if wanted != style:
         _SetWindowLong(hwnd, GWL_EXSTYLE, wanted)
     return True
+
+
+def is_topmost(hwnd: int) -> bool:
+    """Returns whether a window is always on top (has the WS_EX_TOPMOST style)."""
+    return _GetWindowLong is not None and bool(_GetWindowLong(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST)
 
 
 def window_rect(hwnd: int) -> tuple[int, int, int, int] | None:

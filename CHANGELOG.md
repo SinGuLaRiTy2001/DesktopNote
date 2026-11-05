@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Closing the About window with its close button or Esc could bring another app's window in front
+  of the notes.
+
 ## [1.0.0rc6] - 2026-11-05
 
 ### Added

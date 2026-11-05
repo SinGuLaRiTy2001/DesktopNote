@@ -5,6 +5,7 @@ from PySide6.QtCore import QEvent, QSize, Qt, QUrl
 from PySide6.QtGui import QColor, QCursor, QDesktopServices, QFont, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QApplication,
     QHBoxLayout,
     QLabel,
     QLayout,
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
 from . import __version__, icons, motion, win_effects
 from .glass import GlassWindow
 from .i18n import tr
+from .note_window import NoteWindow
 from .theme import WINDOW_RADIUS, Theme, css_color
 from .updates import UpdateFlow
 
@@ -210,7 +212,7 @@ class AboutWindow(GlassWindow):
         self.btn_close.setCursor(Qt.PointingHandCursor)
         self.btn_close.setToolTip(tr("about.close"))
         self.btn_close.setProperty("hoverRadius", CLOSE_PX // 2)
-        self.btn_close.clicked.connect(self.dismiss)
+        self.btn_close.clicked.connect(lambda: self.dismiss(hand_over=True))
 
         self.apply_theme(theme)
         motion.HoverFx.attach(self)
@@ -274,13 +276,37 @@ class AboutWindow(GlassWindow):
         win_effects.bring_to_front(int(self.winId()), True)
         self.activateWindow()
 
-    def dismiss(self) -> None:
-        """Closes the window, leaving a snapshot of it that fades out."""
+    def dismiss(self, hand_over: bool = False) -> None:
+        """Closes the window, leaving a snapshot of it that fades out.
+
+        Args:
+            hand_over: Whether to first activate the closest note behind the window in the
+                z-order (see _activate_note_behind).
+        """
         if self.closing:
             return
         self.closing = True
+        if hand_over:
+            self._activate_note_behind()
         motion.Ghost.from_screen(self, WINDOW_RADIUS)
         self.close()
+
+    def _activate_note_behind(self) -> None:
+        """Activates the closest note behind the window in the z-order.
+
+        Nothing is activated when a window of another app comes before that note; other apps'
+        always-on-top windows, such as the taskbar, are skipped.
+        """
+        own = {int(w.winId()): w for w in QApplication.topLevelWidgets() if w.isVisible() and w is not self}
+        for hwnd in win_effects.windows_behind(int(self.winId())):
+            widget = own.get(hwnd)
+            if widget is None:
+                if win_effects.is_topmost(hwnd):
+                    continue
+                return  # Another app's window comes before any note.
+            if isinstance(widget, NoteWindow):
+                widget.activateWindow()
+                return
 
     # --- Events --------------------------------------------------------------
     def changeEvent(self, e):
@@ -300,7 +326,7 @@ class AboutWindow(GlassWindow):
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_Escape:
-            self.dismiss()
+            self.dismiss(hand_over=True)
         else:
             super().keyPressEvent(e)
 
