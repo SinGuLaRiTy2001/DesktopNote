@@ -14,6 +14,7 @@ Only a release build (PyInstaller) installs updates; from source, the release pa
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -21,11 +22,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QCryptographicHash, QLocale, QObject, QUrl, Signal
+from PySide6.QtCore import QLocale, QObject, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
@@ -520,13 +523,18 @@ class UpdateChecker(QObject):
 class Updater(QObject):
     """Downloads a release, checks and unpacks it, and starts the script that installs it.
 
-    The caller quits the app when ``ready`` is emitted; the script waits for that.
+    The caller quits the app when ``ready`` is emitted; the script waits for that. Checking the
+    download and unpacking it run on a worker thread, which emits stage("preparing"), ready and
+    failed: connect them to methods of an object on the GUI thread to receive them there.
 
     Signals:
+        stage: Emitted with "verifying" once the release is downloaded and with "preparing" once it
+            matches its checksum, before it is unpacked.
         ready: Emitted once the install script runs and waits for the app to quit.
         failed: Emitted with a message if the update stopped; nothing was changed then.
     """
 
+    stage = Signal(str)
     ready = Signal()
     failed = Signal(str)
 
@@ -569,18 +577,23 @@ class Updater(QObject):
         self._get(self._release.zip_url, self._got_zip)
 
     def _got_zip(self, reply: QNetworkReply) -> None:
-        """Checks the download against the SHA-256 and installs it."""
+        """Checks the download against the SHA-256 and installs it, on a worker thread."""
         reply.deleteLater()
         if reply.error() != QNetworkReply.NoError:
             self.failed.emit(reply.errorString())
             return
-        data = reply.readAll()
-        digest = bytes(QCryptographicHash.hash(QByteArray(data), QCryptographicHash.Sha256).toHex()).decode("ascii")
-        if digest != self._expected:
+        data = bytes(reply.readAll())
+        self.stage.emit("verifying")
+        threading.Thread(target=self._verify_and_install, args=(data,), name="DesktopNote update").start()
+
+    def _verify_and_install(self, data: bytes) -> None:
+        """Checks data against the SHA-256, then installs it; runs on the worker thread."""
+        if hashlib.sha256(data).hexdigest() != self._expected:
             self.failed.emit("the download does not match its checksum")
             return
+        self.stage.emit("preparing")
         try:
-            self._install(bytes(data))
+            self._install(data)
         except (OSError, zipfile.BadZipFile) as exc:
             self.failed.emit(str(exc))
 
@@ -625,15 +638,21 @@ class UpdateFlow(QObject):
 
     It belongs to the app, so an update continues after the About window closes.
 
+    Checking only looks for an update; installing it starts with a second act(). An install
+    passes through "downloading", "verifying", "preparing" and "installing".
+
     Attributes:
-        state: "idle", "checking", "current" (up to date), "available", "installing" or
-            "failed".
+        state: "idle", "checking", "current" (up to date), "available", "downloading",
+            "verifying", "preparing", "installing" or "failed".
         release: The update found, if any.
         error: Why the last check or update failed.
+        before_quit: Set by the shown About window. Called with a quit function once the install
+            script waits; returns True if it calls that function itself (once "installing" is on
+            screen), or False if the app should quit at once.
 
     Signals:
         changed: Emitted whenever the state changes.
-        quit_requested: Emitted when the install script waits for the app to quit.
+        quit_requested: Emitted once when the install script waits for the app to quit.
     """
 
     changed = Signal()
@@ -642,12 +661,15 @@ class UpdateFlow(QObject):
     def __init__(self, current: str, data: Path, parent: QObject | None = None):
         super().__init__(parent)
         self.state, self.release, self.error = "idle", None, ""
+        self.before_quit: Callable[[Callable[[], None]], bool] | None = None
         self._data = data
+        self._quit_asked = False
         self._checker = UpdateChecker(current, self)
         self._checker.finished.connect(self._checked)
         self._updater = Updater(self)
-        self._updater.ready.connect(self.quit_requested)
-        self._updater.failed.connect(lambda error: self._set("failed", error=error))
+        self._updater.stage.connect(self._set)
+        self._updater.ready.connect(self._ready)
+        self._updater.failed.connect(self._failed)
 
     def installs(self) -> bool:
         """Returns whether an update found can be installed here (a release build)."""
@@ -660,7 +682,7 @@ class UpdateFlow(QObject):
             self._checker.check()
         elif self.state == "available":
             if self.installs():
-                self._set("installing")
+                self._set("downloading")
                 self._updater.start(self.release, self._data)
             else:
                 QDesktopServices.openUrl(QUrl(self.release.page))
@@ -672,6 +694,26 @@ class UpdateFlow(QObject):
         else:
             self.release = release
             self._set("available" if release else "current")
+
+    def _failed(self, error: str) -> None:
+        """Moves to "failed" and keeps the error."""
+        self._set("failed", error=error)
+
+    def _ready(self) -> None:
+        """Shows the "installing" state, then asks the app to quit.
+
+        With before_quit set, the app quits once the About window shows that state.
+        """
+        self._set("installing")
+        hold = self.before_quit
+        if hold is None or not hold(self._quit):
+            self._quit()
+
+    def _quit(self) -> None:
+        """Emits quit_requested, the first time only."""
+        if not self._quit_asked:
+            self._quit_asked = True
+            self.quit_requested.emit()
 
     def _set(self, state: str, error: str = "") -> None:
         """Sets the state and tells the About window."""

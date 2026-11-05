@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The About window shows each step of an update in turn: downloading, verifying, preparing and
+  installing.
+
 ### Fixed
 
 - Closing the About window with its close button or Esc could bring another app's window in front

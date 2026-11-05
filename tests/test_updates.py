@@ -3,10 +3,13 @@
 Swapping the app files, and recovering a swap cut short, is tested in test_update_recovery.py.
 """
 import hashlib
+import io
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -159,6 +162,126 @@ class TimeoutTest(unittest.TestCase):
         self.wait_for(outcome)
         self.assertEqual(len(outcome), 1)
         self.assertTrue(outcome[0], "it says why")
+
+
+def local_release(folder: Path, data: bytes, checksum: str | None = None) -> updates.Release:
+    """Writes data as a release zip with its checksum file into folder; returns the Release for them."""
+    (folder / "release.zip").write_bytes(data)
+    digest = checksum or hashlib.sha256(data).hexdigest()
+    (folder / "release.zip.sha256").write_text(f"{digest}  release.zip\n")
+    url = lambda name: QUrl.fromLocalFile(str(folder / name)).toString()  # noqa: E731
+    return updates.Release("9.9.9", "https://example.invalid/page", url("release.zip"), url("release.zip.sha256"))
+
+
+def zip_with(name: str) -> bytes:
+    """Returns a zip archive holding one empty file."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr(name, "")
+    return buffer.getvalue()
+
+
+class StageTest(unittest.TestCase):
+    """The Updater reports verifying once the download is in, and preparing once it matches."""
+
+    def run_update(self, release: updates.Release) -> list:
+        app, data = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
+        updater, outcome = updates.Updater(), []
+        updater.stage.connect(lambda stage: outcome.append(("stage", stage)))
+        updater.ready.connect(lambda: outcome.append(("ready",)))
+        updater.failed.connect(lambda error: outcome.append(("failed", error)))
+        updater.start(release, data, app)
+        for _ in range(100):
+            if outcome and outcome[-1][0] != "stage":
+                break
+            QTest.qWait(20)
+        return outcome
+
+    def test_a_checksum_mismatch_stops_while_verifying(self):
+        folder = Path(tempfile.mkdtemp())
+        outcome = self.run_update(local_release(folder, b"x", hashlib.sha256(b"other").hexdigest()))
+        self.assertEqual(outcome, [("stage", "verifying"), ("failed", "the download does not match its checksum")])
+
+    def test_a_bad_release_stops_while_preparing(self):
+        folder = Path(tempfile.mkdtemp())
+        outcome = self.run_update(local_release(folder, zip_with("readme.txt")))
+        self.assertEqual(outcome, [("stage", "verifying"), ("stage", "preparing"),
+                                   ("failed", "the release does not contain DesktopNote.exe")])
+
+
+class FlowTest(unittest.TestCase):
+    """UpdateFlow: checking only finds an update; a second act() installs it, stage by stage."""
+
+    def setUp(self):
+        self.flow = updates.UpdateFlow("1.0.0", Path(tempfile.mkdtemp()))
+        self.states: list[str] = []
+        self.flow.changed.connect(lambda: self.states.append(self.flow.state))
+        self.found = updates.Release("1.0.1", "https://example.invalid/page", "zip", "sha")
+        self.start = mock.patch.object(self.flow._updater, "start").start()
+        self.addCleanup(mock.patch.stopall)
+
+    def check(self, release=None, error=""):
+        with mock.patch.object(self.flow._checker, "check",
+                               side_effect=lambda: self.flow._checker.finished.emit(release, error)):
+            self.flow.act()
+
+    def test_a_found_update_waits_for_the_second_act(self):
+        self.check(self.found)
+        self.assertEqual(self.states, ["checking", "available"])
+        self.start.assert_not_called()
+        with mock.patch.object(updates, "can_install", return_value=True):
+            self.flow.act()
+        self.assertEqual(self.flow.state, "downloading")
+        self.start.assert_called_once()
+
+    def test_from_source_it_opens_the_release_page(self):
+        self.check(self.found)
+        with mock.patch.object(updates.QDesktopServices, "openUrl") as open_url:
+            self.flow.act()
+        open_url.assert_called_once()
+        self.assertEqual(self.flow.state, "available")
+        self.start.assert_not_called()
+
+    def test_no_newer_release_is_up_to_date(self):
+        self.check(None)
+        self.assertEqual(self.states, ["checking", "current"])
+
+    def test_a_failed_check_offers_another_try(self):
+        self.check(None, "offline")
+        self.assertEqual((self.flow.state, self.flow.error), ("failed", "offline"))
+
+    def test_the_install_goes_through_each_stage(self):
+        quits = []
+        self.flow.quit_requested.connect(lambda: quits.append(True))
+        self.check(self.found)
+        with mock.patch.object(updates, "can_install", return_value=True):
+            self.flow.act()
+        self.flow._updater.stage.emit("verifying")
+        self.flow._updater.stage.emit("preparing")
+        self.flow._updater.ready.emit()
+        self.assertEqual(self.states, ["checking", "available", "downloading", "verifying", "preparing", "installing"])
+        self.assertEqual(quits, [True], "without an About window shown, the app quits at once")
+
+    def test_a_failure_in_any_stage_offers_another_try(self):
+        for stages in ([], ["verifying"], ["verifying", "preparing"]):
+            with self.subTest(failed_after=stages):
+                self.check(self.found)
+                with mock.patch.object(updates, "can_install", return_value=True):
+                    self.flow.act()
+                for stage in stages:
+                    self.flow._updater.stage.emit(stage)
+                self.flow._updater.failed.emit("broken")
+                self.assertEqual((self.flow.state, self.flow.error), ("failed", "broken"))
+
+    def test_before_quit_can_hold_the_quit(self):
+        quits, held = [], []
+        self.flow.quit_requested.connect(lambda: quits.append(True))
+        self.flow.before_quit = lambda quit: held.append(quit) or True
+        self.flow._updater.ready.emit()
+        self.assertEqual((self.flow.state, quits), ("installing", []))
+        held[0]()
+        held[0]()
+        self.assertEqual(quits, [True], "quit_requested is emitted once")
 
 
 if __name__ == "__main__":

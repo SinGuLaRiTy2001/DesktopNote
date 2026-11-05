@@ -11,7 +11,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import QElapsedTimer, QPoint, Qt  # noqa: E402
 from PySide6.QtGui import QCloseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel  # noqa: E402
@@ -91,11 +91,15 @@ class AboutWindowTest(unittest.TestCase):
         win = self.open("en")
         flow = self.flow
         self.assertEqual(win.btn_update.text(), "Check for Updates")
-        for state, text, enabled in (("checking", "Checking…", False), ("current", "Up to Date", True),
-                                     ("installing", "Updating…", False), ("failed", "Try Again", True)):
+        for state, text, enabled in (("checking", "Checking for updates…", False), ("current", "Up to Date", True),
+                                     ("downloading", "Downloading update…", False),
+                                     ("verifying", "Verifying update…", False),
+                                     ("preparing", "Preparing update…", False),
+                                     ("installing", "Installing update…", False), ("failed", "Try Again", True)):
             with self.subTest(state=state):
                 flow._set(state, error="offline" if state == "failed" else "")
-                self.assertEqual((win.btn_update.text(), win.btn_update.isEnabled()), (text, enabled))
+                settle(win.btn_update)
+                self.assertEqual((win.btn_update._shown, win.btn_update.isEnabled()), (text, enabled))
         self.assertEqual(win.btn_update.toolTip(), "offline", "a failure says why")
         flow.release = Release("9.9.9", "https://example.invalid", "", "")
         flow._set("available")
@@ -107,9 +111,9 @@ class AboutWindowTest(unittest.TestCase):
         self.flow._set("checking")
         self.flow._set("current")
         self.assertEqual(button.text(), "Up to Date", "text() is the new text at once")
-        QTest.qWait(about.TEXT_OUT_MS + about.TEXT_IN_MS + 200)
-        self.assertEqual((button._shown, round(button._opacity, 2)), ("Up to Date", 1.0))
-        self.assertGreaterEqual(button.width(), button.sizeHint().width())
+        settle(button)
+        self.assertEqual((button._shown, round(button._opacity, 2), button._dx), ("Up to Date", 1.0, 0.0))
+        self.assertGreaterEqual(button.width(), button.fontMetrics().horizontalAdvance("Up to Date"))
 
     def test_escape_closes(self):
         win = self.open("en")
@@ -122,6 +126,152 @@ class AboutWindowTest(unittest.TestCase):
         QApplication.sendEvent(win, QCloseEvent())  # As Alt+F4 sends it.
         self.assertTrue(win.closing)
 
+
+def settle(button, limit_ms=5000):
+    """Waits until the button shows its newest text, faded in and past its hold."""
+    for _ in range(limit_ms // 20):
+        if button.is_settled() and not button._hold.isActive():
+            return
+        QTest.qWait(20)
+
+
+class UpdateStatusTest(unittest.TestCase):
+    """The update button shows each stage in turn, readable, on a centred version line."""
+
+    def setUp(self):
+        i18n.set_language("en")
+        self.addCleanup(i18n.set_language, i18n.DEFAULT_LANGUAGE)
+        self.flow = UpdateFlow(__version__, Path(tempfile.mkdtemp()))
+        self.win = AboutWindow(LIGHT, self.flow)
+        self.win.show()
+        _app.processEvents()
+        self.addCleanup(lambda: self.win.closing or self.win.close())
+        self.button = self.win.btn_update
+        self.shown: list[tuple[str, float]] = []  # (text, ms since start) each time a text has faded in.
+        self.clock = QElapsedTimer()
+        self.clock.start()
+        faded_in = self.button._faded_in
+
+        def record():
+            self.shown.append((self.button._shown, self.clock.elapsed()))
+            faded_in()
+        self.button._faded_in = record
+
+    def test_quick_stages_are_each_shown_in_order(self):
+        for state in ("downloading", "verifying", "preparing", "installing"):
+            self.flow._set(state)
+        settle(self.button)
+        texts = [text for text, _ in self.shown]
+        self.assertEqual(texts, ["Downloading update…", "Verifying update…", "Preparing update…",
+                                 "Installing update…"])
+        gaps = [later - earlier for (_, earlier), (_, later) in zip(self.shown, self.shown[1:])]
+        self.assertTrue(all(gap >= about.TEXT_HOLD_MS for gap in gaps), f"each text stays readable: {gaps}")
+        self.assertEqual((round(self.button._opacity, 2), self.button._dx), (1.0, 0.0))
+
+    def test_a_failure_drops_the_stages_not_yet_shown(self):
+        self.flow._set("downloading")
+        settle(self.button)
+        for state in ("verifying", "preparing"):
+            self.flow._set(state)
+        self.flow._set("failed", error="broken")
+        settle(self.button)
+        self.assertEqual([text for text, _ in self.shown], ["Downloading update…", "Try Again"])
+        self.assertEqual((self.button.toolTip(), self.button.isEnabled()), ("broken", True))
+
+    def test_a_retry_that_fails_at_once_shows_try_again(self):
+        self.flow._set("failed", error="offline")
+        settle(self.button)
+        self.flow._set("checking")
+        self.flow._set("failed", error="offline")
+        settle(self.button)
+        self.assertEqual((self.button._shown, round(self.button._opacity, 2)), ("Try Again", 1.0))
+        self.assertTrue(self.button.isEnabled())
+
+    def test_the_button_waits_until_its_text_has_caught_up(self):
+        self.flow._set("checking")
+        self.flow._set("current")
+        self.assertFalse(self.button.isEnabled(), "still showing an earlier text")
+        settle(self.button)
+        self.assertTrue(self.button.isEnabled())
+
+    def test_the_app_quits_once_installing_has_faded_in(self):
+        quits = []
+        self.flow.quit_requested.connect(lambda: quits.append(self.button._shown))
+        self.flow._set("preparing")
+        self.flow._ready()
+        self.assertEqual(quits, [], "it waits for the text")
+        settle(self.button)
+        self.assertEqual(quits, ["Installing update…"])
+
+    def test_closing_the_window_lets_the_update_go_on(self):
+        quits = []
+        self.flow.quit_requested.connect(lambda: quits.append(True))
+        self.flow._set("preparing")
+        self.flow._ready()
+        self.win.dismiss()
+        self.assertEqual(quits, [True])
+        self.assertIsNone(self.flow.before_quit)
+
+    def test_a_hidden_window_does_not_hold_the_quit(self):
+        quits = []
+        self.flow.quit_requested.connect(lambda: quits.append(True))
+        self.win.hide()
+        self.flow._ready()
+        self.assertEqual(quits, [True])
+
+    def test_the_version_line_stays_centred(self):
+        for language in ("en", "zh"):
+            with self.subTest(language=language):
+                i18n.set_language(language)
+                self.addCleanup(i18n.set_language, i18n.DEFAULT_LANGUAGE)
+                flow = UpdateFlow(__version__, Path(tempfile.mkdtemp()))
+                flow.release = Release("1.0.0rc10", "https://example.invalid", "", "")
+                win = AboutWindow(LIGHT, flow)
+                win.show()
+                self.addCleanup(lambda win=win: win.closing or win.close())
+                version = next(label for label in win.findChildren(QLabel)
+                               if label.text() == i18n.tr("about.version", version=__version__))
+                gaps = set()
+                for state in ("checking", "available", "downloading", "verifying", "preparing", "installing",
+                              "current", "failed"):
+                    flow._set(state)
+                    settle(win.btn_update)
+                    _app.processEvents()
+                    button = win.btn_update
+                    text_w = button.fontMetrics().horizontalAdvance(button._shown)
+                    self.assertGreaterEqual(button.width() - button.inset, text_w, f"{state}: the text fits")
+                    version_left = version.mapTo(win, QPoint(0, 0)).x()
+                    version_right = version.mapTo(win, QPoint(version.width(), 0)).x()
+                    text_left = button.mapTo(win, QPoint(button.inset, 0)).x()
+                    centre = (version_left + text_left + text_w) / 2
+                    self.assertLessEqual(abs(centre - win.width() / 2), 1.0, f"{state}: the line is centred")
+                    gaps.add(text_left - version_right)
+                self.assertEqual(len(gaps), 1, f"the same gap after the dot in every state: {gaps}")
+
+    def test_the_text_never_reaches_the_dot(self):
+        line = self.win._version_line
+        version, dot, button = line._parts
+        clearances = []
+        self.flow._set("checking")
+        self.flow._set("current")
+        for _ in range(120):  # Every frame of both changes, measuring the dot each time.
+            dot_right = dot.x() + dot.width() - dot.contentsMargins().right()  # The dot's text ends here.
+            self.assertGreaterEqual(button.x(), dot_right, "the button stays clear of the dot")
+            clearances.append(button.x() + button.inset + button._dx - dot_right)  # The painted text's start.
+            QTest.qWait(10)
+        self.assertGreater(min(clearances), 0, f"the sliding text stays clear of the dot: {min(clearances)}")
+
+    def test_the_width_eases_between_texts(self):
+        self.flow._set("checking")
+        self.flow._set("current")
+        widths = []
+        for _ in range(150):  # Through the fade to the long text, its hold and the fade to the short one.
+            widths.append(self.button.sizeHint().width())
+            QTest.qWait(10)
+        long, short = (self.button.fontMetrics().horizontalAdvance(text)
+                       for text in ("Checking for updates…", "Up to Date"))
+        self.assertTrue(any(short < w < long for w in widths[widths.index(max(widths)):]),
+                        f"the width passes through values in between: {sorted(set(widths))}")
 
 class HandOverTest(unittest.TestCase):
     """Closing About with its button or Esc activates the closest note behind it in the z-order.

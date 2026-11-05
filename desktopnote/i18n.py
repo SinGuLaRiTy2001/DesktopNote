@@ -22,11 +22,14 @@ _STRINGS: dict[str, tuple[str, str]] = {
     "tray.quit": ("退出", "Quit"),
     # Updates, in the About window.
     "update.check": ("检查更新", "Check for Updates"),
-    "update.checking": ("正在检查…", "Checking…"),
+    "update.checking": ("正在检查更新…", "Checking for updates…"),
     "update.current": ("已是最新版本", "Up to Date"),
     "update.install": ("更新到 {version}", "Update to {version}"),
     "update.download": ("下载 {version}", "Download {version}"),
-    "update.installing": ("正在更新…", "Updating…"),
+    "update.downloading": ("正在下载更新…", "Downloading update…"),
+    "update.verifying": ("正在校验更新…", "Verifying update…"),
+    "update.preparing": ("正在准备更新…", "Preparing update…"),
+    "update.installing": ("正在安装更新…", "Installing update…"),
     "update.retry": ("重试", "Try Again"),  # After a failed check or update; the tooltip says why.
     "update.unfinished": ("DesktopNote 未能撤销一次中断的更新：{problem}。\n\n请关闭正在使用 {folder} 中文件的程序，"
                           "然后重新启动 DesktopNote。如果仍然出现此提示，请从发布页面重新下载 DesktopNote。"
