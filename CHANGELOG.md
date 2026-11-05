@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0rc7] - 2026-11-05
+
 ### Changed
 
 - The About window shows each step of an update in turn: downloading, verifying, preparing and
@@ -162,7 +164,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Reminder notifications, keep-on-top, and a tray menu listing every note.
 - Settings for theme, language (English and Simplified Chinese), text size and start at login.
 
-[Unreleased]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc6...HEAD
+[Unreleased]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc7...HEAD
+[1.0.0rc7]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc6...v1.0.0rc7
 [1.0.0rc6]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc5...v1.0.0rc6
 [1.0.0rc5]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc4...v1.0.0rc5
 [1.0.0rc4]: https://github.com/SinGuLaRiTy2001/DesktopNote/compare/v1.0.0rc3...v1.0.0rc4
