@@ -2,6 +2,7 @@
 
 Builds real note windows; CI runs them with QT_QPA_PLATFORM=offscreen.
 """
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -16,9 +17,9 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from desktopnote.models import Item, Note  # noqa: E402
 from desktopnote.note_window import NoteWindow  # noqa: E402
 from desktopnote.theme import LIGHT  # noqa: E402
-from tests import _support  # noqa: E402
 
-_support.qapp()
+_app = QApplication.instance() or QApplication(sys.argv)
+_app.setQuitOnLastWindowClosed(False)
 
 
 class ItemDeleteTest(unittest.TestCase):
@@ -29,8 +30,8 @@ class ItemDeleteTest(unittest.TestCase):
         self.win = NoteWindow(Note(w=280, h=240, items=items), LIGHT, 60, 1.0)
         self.win.show()
         self.win.set_editing(True)
+        QTest.qWait(300)
         self.row = self.win.rows[0]
-        _support.wait_until(lambda: self.row._edit_level == 1.0)
         self.row._hover = 1.0  # As if the pointer were over it.
         self.row._sync_delete()
         self.deleted = []
@@ -41,13 +42,8 @@ class ItemDeleteTest(unittest.TestCase):
         self.win.deleteLater()
 
     def arm(self):
-        """Clicks the × and waits until it has stretched into the Delete pill."""
         QTest.mouseClick(self.row.del_btn, Qt.LeftButton)
-        _support.wait_until(lambda: self.row._armed == 1.0)
-
-    def fades(self) -> None:
-        """Waits until the row has started to fade away."""
-        _support.wait_until(lambda: self.row.graphicsEffect() is not None and self.row.graphicsEffect().opacity() < 1.0)
+        QTest.qWait(self.row.CONFIRM_IN_MS + 150)
 
     def test_one_click_only_arms(self):
         self.arm()
@@ -55,13 +51,20 @@ class ItemDeleteTest(unittest.TestCase):
         self.assertTrue(self.row.del_confirm.isVisible())
         self.assertEqual(self.row._armed, 1.0)
 
+    def test_the_pill_deletes(self):
+        self.arm()
+        QTest.qWait(QApplication.doubleClickInterval())
+        QTest.mouseClick(self.row.del_confirm, Qt.LeftButton)
+        self.assertEqual(self.deleted, [self.row])
+
     def test_a_deleted_item_fades_under_the_rows_below(self):
         self.arm()
+        QTest.qWait(QApplication.doubleClickInterval())
         x, height = self.row.x(), self.row.height()
         QTest.mouseClick(self.row.del_confirm, Qt.LeftButton)
         self.assertEqual([item.text for item in self.win.note.items], ["B"])
-        self.fades()
-        _support.wait_until(lambda: self.row.maximumHeight() < height)
+        QTest.qWait(140)
+        self.assertLess(self.row.graphicsEffect().opacity(), 1.0, "it fades")
         self.assertLess(self.row.maximumHeight(), height, "the rows below move up over it")
         self.assertEqual(self.row.x(), x, "it does not slide sideways")
 
@@ -70,7 +73,8 @@ class ItemDeleteTest(unittest.TestCase):
         self.win.note.items.remove(item)  # As the command line's delete does.
         self.win.forget_item(item)
         self.assertNotIn(self.row, self.win.rows)
-        self.fades()  # Like a deletion by hand.
+        QTest.qWait(140)
+        self.assertLess(self.row.graphicsEffect().opacity(), 1.0, "it fades like a deletion by hand")
 
     def test_a_double_click_on_the_x_does_not_delete(self):
         QTest.mouseClick(self.row.del_btn, Qt.LeftButton)
@@ -93,13 +97,15 @@ class ItemDeleteTest(unittest.TestCase):
     def test_it_turns_back_after_a_while(self):
         self.row._disarm.setInterval(300)
         self.arm()
-        _support.wait_until(lambda: not self.row.del_confirm.isVisible(), 3000, "it did not turn back")
+        QTest.qWait(300 + self.row.CONFIRM_OUT_MS + 150)
+        self.assertFalse(self.row.del_confirm.isVisible())
         self.assertEqual(self.deleted, [])
 
     def test_leaving_edit_mode_turns_it_back(self):
         self.arm()
         self.win.set_editing(False)
-        _support.wait_until(lambda: not self.row.del_confirm.isVisible(), 3000, "it did not turn back")
+        QTest.qWait(self.row.CONFIRM_OUT_MS + 150)
+        self.assertFalse(self.row.del_confirm.isVisible())
 
     def test_the_pill_fits_the_row_at_every_text_size(self):
         for scale in (0.85, 1.0, 1.3):
@@ -110,8 +116,9 @@ class ItemDeleteTest(unittest.TestCase):
                 self.assertTrue(row.contains(box), f"{box} outside {row}")
                 self.assertGreaterEqual(box.width(), self.row.del_confirm.sizeHint().width())
                 self.row._set_armed(False)
-                _support.wait_until(lambda: self.row._armed == 0.0)
+                QTest.qWait(self.row.CONFIRM_OUT_MS + 100)
 
 
 if __name__ == "__main__":
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     unittest.main()

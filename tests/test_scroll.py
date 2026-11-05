@@ -2,6 +2,7 @@
 
 Builds real note windows; CI runs them with QT_QPA_PLATFORM=offscreen.
 """
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -17,9 +18,9 @@ from desktopnote.controls import OverlayScrollBar  # noqa: E402
 from desktopnote.models import Item, Note  # noqa: E402
 from desktopnote.note_window import NoteWindow  # noqa: E402
 from desktopnote.theme import LIGHT  # noqa: E402
-from tests import _support  # noqa: E402
 
-_app = _support.qapp()
+_app = QApplication.instance() or QApplication(sys.argv)
+_app.setQuitOnLastWindowClosed(False)
 
 
 def _wheel(widget, notches: int) -> None:
@@ -37,7 +38,7 @@ class SmoothScrollTest(unittest.TestCase):
         items = [Item(type="todo", text=f"Item {i}") for i in range(30)]
         self.win = NoteWindow(Note(w=260, h=260, items=items), LIGHT, 60, 1.0)
         self.win.show()
-        _support.wait_until(self.win.isVisible)
+        QTest.qWait(50)
         self.bar = self.win.scroll.verticalScrollBar()
         self.assertGreater(self.bar.maximum(), 0, "the note should be able to scroll")
 
@@ -102,4 +103,5 @@ class SmoothScrollTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     unittest.main()

@@ -11,11 +11,11 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtTest import QTest  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from desktopnote import app, icons, win_effects  # noqa: E402
-from tests import _support  # noqa: E402
 
-_app = _support.qapp()
+_app = QApplication.instance() or QApplication(sys.argv)
 
 # Texts that end a PowerShell string literal if they are pasted into the script.
 QUOTES = ["Don't", "Don’t forget", "‘报告’", "x’) ; Write-Output INJECTED ; $z=(‘", "‚‛`$(1)\n\""]

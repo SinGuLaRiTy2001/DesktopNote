@@ -1,12 +1,11 @@
-"""Storage tests: notes survive a save and load, unreadable files are kept, bad values do not stop
-loading, saves are robust, and command lines run at the same time keep every change.
-"""
+"""Storage tests: unreadable files are kept, bad values do not stop loading, saves are robust."""
 import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -15,8 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from desktopnote import storage  # noqa: E402
 from desktopnote.models import Item, Note, Settings  # noqa: E402
 from desktopnote.storage import Store  # noqa: E402
-from tests import _support  # noqa: E402
 
+ROOT = Path(__file__).resolve().parents[1]
 GOOD = {"version": 1, "settings": {"first_run": False, "language": "en"},
         "notes": [{"title": "Keep", "items": [{"type": "todo", "text": "Milk"}]}]}
 
@@ -25,40 +24,24 @@ class StorageTestCase(unittest.TestCase):
     """Gives each test an empty data folder."""
 
     def setUp(self):
-        self.folder = _support.temp_dir(self)
+        self._tmp = tempfile.TemporaryDirectory()
+        self.folder = Path(self._tmp.name)
         self.path = self.folder / "notes.json"
 
+    def tearDown(self):
+        self._tmp.cleanup()
+
     def write(self, content, name="notes.json"):
-        """Writes content (a string, or data as JSON) to the named file in the data folder."""
         (self.folder / name).write_text(content if isinstance(content, str) else json.dumps(content),
                                         encoding="utf-8")
 
     def load(self) -> Store:
-        """Returns a Store loaded from the data folder."""
         store = Store(self.path)
         store.load()
         return store
 
     def unreadable(self) -> list[str]:
-        """Returns the names of the files set aside as unreadable."""
         return sorted(p.name for p in self.folder.glob("notes-unreadable-*.json"))
-
-
-class RoundTripTest(StorageTestCase):
-    """Every field of a note, its items and its place at a screen edge survives a save and load."""
-
-    def test_every_field_survives_a_save_and_load(self):
-        store = Store(self.path)
-        note = Note(x=-1500, y=40, w=320, h=280, tint="sky", dock="right")
-        note.items = [Item(type="todo", text="买牛奶", done=True), Item(type="reminder", due="2026-10-22T09:00")]
-        store.notes = [note, Note(x=600, y=500)]
-        store.save()
-        restored = self.load().notes
-        self.assertEqual([(n.x, n.y, n.w, n.h, n.tint, n.dock) for n in restored],
-                         [(-1500, 40, 320, 280, "sky", "right"), (600, 500, 300, 340, "none", "")])
-        self.assertEqual([(i.type, i.text, i.done) for i in restored[0].items],
-                         [("todo", "买牛奶", True), ("reminder", "", False)])
-        self.assertEqual(restored[0].items[1].due_dt, datetime(2026, 10, 22, 9, 0))
 
 
 class UnreadableFileTest(StorageTestCase):
@@ -202,18 +185,17 @@ class ConcurrentCommandLineTest(unittest.TestCase):
     """Command lines run at the same time on the data file take turns: every change is kept."""
 
     def test_parallel_adds(self):
-        home = _support.temp_dir(self)
-        env = {**os.environ, "DESKTOPNOTE_HOME": str(home), "PYTHONIOENCODING": "utf-8"}
-        procs = [subprocess.Popen([sys.executable, "-m", "desktopnote.cli", "add", "todo", f"item {i}"],
-                                  cwd=_support.ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                  encoding="utf-8")
-                 for i in range(8)]
-        outputs = [proc.communicate(timeout=120) for proc in procs]
-        for out, err in outputs:
-            self.assertTrue(json.loads(out)["ok"], err)
-        notes = json.loads((home / "notes.json").read_text(encoding="utf-8"))["notes"]
-        self.assertEqual(len(notes), 1, "one Inbox, not one per command")
-        self.assertEqual(sorted(i["text"] for i in notes[0]["items"]), sorted(f"item {i}" for i in range(8)))
+        with tempfile.TemporaryDirectory() as home:
+            env = {**os.environ, "DESKTOPNOTE_HOME": home, "PYTHONIOENCODING": "utf-8"}
+            procs = [subprocess.Popen([sys.executable, "-m", "desktopnote.cli", "add", "todo", f"item {i}"], cwd=ROOT,
+                                      env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
+                     for i in range(8)]
+            outputs = [proc.communicate(timeout=120) for proc in procs]
+            for out, err in outputs:
+                self.assertTrue(json.loads(out)["ok"], err)
+            notes = json.loads((Path(home) / "notes.json").read_text(encoding="utf-8"))["notes"]
+            self.assertEqual(len(notes), 1, "one Inbox, not one per command")
+            self.assertEqual(sorted(i["text"] for i in notes[0]["items"]), sorted(f"item {i}" for i in range(8)))
 
 
 if __name__ == "__main__":

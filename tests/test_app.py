@@ -13,12 +13,12 @@ from PySide6.QtCore import QRect, QTimer  # noqa: E402
 from PySide6.QtGui import QGuiApplication  # noqa: E402
 from PySide6.QtNetwork import QLocalServer, QLocalSocket  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from desktopnote import app  # noqa: E402
 from desktopnote.models import Note  # noqa: E402
-from tests import _support  # noqa: E402
 
-_app = _support.qapp()
+_app = QApplication.instance() or QApplication(sys.argv)
 
 
 class ServerTest(unittest.TestCase):
@@ -163,13 +163,14 @@ class SaveTest(unittest.TestCase):
         self.assertEqual((owner._save_failures, owner.save_timer.isActive(), messages), (0, False, []))
 
     def test_unreadable_files_are_reported(self):
-        _support.use_language(self, "en")
         for from_backup, names, expected in ((True, ["notes-unreadable-1.json"], "restored from the backup"),
                                              (False, ["notes-unreadable-1.json"], "could not be read"),
                                              (False, [], None)):
             with self.subTest(from_backup=from_backup, names=names):
                 owner, messages = self.owner(mock.Mock())
                 owner.store.from_backup, owner.store.set_aside = from_backup, [Path(n) for n in names]
+                self.addCleanup(app.i18n.set_language, app.i18n.language())  # Leaves the language as it was.
+                app.i18n.set_language("en")
                 app.DesktopNoteApp._report_unreadable(owner)
                 if expected is None:
                     self.assertEqual(messages, [])

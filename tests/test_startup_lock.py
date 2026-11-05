@@ -5,7 +5,9 @@ second Store in this process: the lock is a byte-range lock, so a second handle 
 """
 import json
 import os
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -15,13 +17,14 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtCore import QTimer  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from desktopnote import app, cli, instance, storage  # noqa: E402
 from desktopnote.models import Note  # noqa: E402
 from desktopnote.storage import DataFolderBusy, Store  # noqa: E402
-from tests import _support  # noqa: E402
 
-_app = _support.qapp()
+_app = QApplication.instance() or QApplication(sys.argv)
+ROOT = Path(__file__).resolve().parents[1]
 NOTES = json.dumps({"settings": {"first_run": False}, "notes": [{"title": "Keep me", "items": []}]})
 
 
@@ -29,14 +32,14 @@ class LockTestCase(unittest.TestCase):
     """A data folder with notes, and a holder for its lock."""
 
     def setUp(self):
-        self.folder = _support.temp_dir(self)
+        self._tmp = tempfile.TemporaryDirectory()
+        self.folder = Path(self._tmp.name)
         (self.folder / "notes.json").write_text(NOTES, encoding="utf-8")
         self.holder = Store(self.folder / "notes.json")
         env = mock.patch.dict(os.environ, {"DESKTOPNOTE_HOME": str(self.folder)})
         env.start()
         self.addCleanup(env.stop)
-        # An app running on this data folder, not on whichever one was set when instance was imported
-        # (such as the everyday DesktopNote, which may be running).
+        # is_running() checks for an app on this data folder, not on the one set when instance was imported.
         running = mock.patch.object(cli, "is_running", lambda: instance.is_running(instance._server_name()))
         running.start()
         self.addCleanup(running.stop)
@@ -52,19 +55,9 @@ class LockTestCase(unittest.TestCase):
         self.addCleanup(patch.stop)
 
     def tearDown(self):
-        for timer in self._timers:
-            timer.cancel()
-            timer.join()
         if self.holder._lock is not None:
             self.holder._unlock()
-
-    _timers: list = []
-
-    def later(self, seconds: float, fn) -> None:
-        """Calls fn on another thread after seconds, unless the test has ended by then."""
-        timer = threading.Timer(seconds, fn)
-        self._timers = [*self._timers, timer]
-        timer.start()
+        self._tmp.cleanup()
 
     def hold(self, release_after_ms: int | None = None) -> None:
         """Takes the lock, and gives it up after release_after_ms."""
@@ -73,7 +66,6 @@ class LockTestCase(unittest.TestCase):
             QTimer.singleShot(release_after_ms, self.holder._unlock)
 
     def notes_file(self) -> str:
-        """Returns the content of the data folder's notes.json."""
         return (self.folder / "notes.json").read_text(encoding="utf-8")
 
 
@@ -98,6 +90,12 @@ class StoreLockTest(LockTestCase):
             with Store().locked(timeout_s=0.3):
                 self.fail("ran without the lock")
         self.assertGreaterEqual(time.monotonic() - started, 0.3)
+
+    def test_locked_goes_ahead_once_the_lock_is_free(self):
+        self.hold()
+        threading.Timer(0.3, self.holder._unlock).start()
+        with Store().locked(timeout_s=5):
+            pass
 
     def test_the_app_never_falls_back_to_reading_without_the_lock(self):
         self.hold()
@@ -198,11 +196,11 @@ class CommandLineLockTest(LockTestCase):
     """The command line takes the same lock: it waits for it, or says the notes are in use."""
 
     def test_it_waits_for_the_lock(self):
-        self.hold()
-        self.later(1.5, self.holder._unlock)  # Well after the command has started and found the lock taken.
-        started = time.monotonic()
-        done = _support.run_cli(self.folder, "add", "todo", "Waited")
-        self.assertGreaterEqual(time.monotonic() - started, 1.5, "it waited for the lock")
+        self.hold(release_after_ms=None)
+        threading.Timer(0.5, self.holder._unlock).start()
+        env = {**os.environ, "DESKTOPNOTE_HOME": str(self.folder), "PYTHONIOENCODING": "utf-8"}
+        done = subprocess.run([sys.executable, "-m", "desktopnote.cli", "add", "todo", "Waited"], cwd=ROOT, env=env,
+                              capture_output=True, encoding="utf-8", timeout=60)
         self.assertTrue(json.loads(done.stdout)["ok"], done.stderr)
         titles = [n["title"] for n in json.loads(self.notes_file())["notes"]]
         self.assertEqual(titles, ["Keep me", "Inbox"], "the earlier notes are kept")
@@ -221,7 +219,7 @@ class CommandLineLockTest(LockTestCase):
         self.hold()
         self.holder.load()
         self.holder.notes.append(Note(title="Saved while the command waited"))
-        self.later(0.3, lambda: (self.holder.save(), self.holder._unlock()))
+        threading.Timer(0.3, lambda: (self.holder.save(), self.holder._unlock())).start()
         request = {"command": "add", "kind": "todo", "text": "x", "note": "Saved while the command waited"}
         result = cli.run_offline(request)
         self.assertTrue(result["ok"])

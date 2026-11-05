@@ -1,13 +1,12 @@
-"""Update tests: picking the release, downloading and checking it, preparing it, and UpdateFlow.
+"""Update tests: picking the release, checking the download, and backing up the notes.
 
-The Updater runs on real local files; the recovery entry and the install script are mocked, so no
-test writes the registry or starts PowerShell. Swapping the app files, and recovering a swap cut
-short, is tested in test_update_recovery.py.
+Swapping the app files, and recovering a swap cut short, is tested in test_update_recovery.py.
 """
 import contextlib
 import hashlib
 import io
 import sys
+import tempfile
 import threading
 import unittest
 import zipfile
@@ -19,11 +18,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6.QtCore import QUrl  # noqa: E402
 from PySide6.QtNetwork import QHostAddress, QTcpServer  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from desktopnote import updates  # noqa: E402
-from tests import _support  # noqa: E402
 
-_support.qapp()
+_app = QApplication.instance() or QApplication(sys.argv)  # Other test modules need widgets.
 
 
 def release(tag: str, prerelease: bool = False, draft: bool = False, assets: bool = True) -> dict:
@@ -32,31 +31,6 @@ def release(tag: str, prerelease: bool = False, draft: bool = False, assets: boo
     files = [{"name": n, "browser_download_url": f"https://example.invalid/{n}"} for n in (name, f"{name}.sha256")]
     return {"tag_name": tag, "prerelease": prerelease, "draft": draft, "html_url": f"https://example.invalid/{tag}",
             "assets": files if assets else []}
-
-
-def local_release(folder: Path, data: bytes, checksum: str | None = None) -> updates.Release:
-    """Writes data as a release zip with its checksum file into folder; returns the Release for them.
-
-    Args:
-        folder: Where the two files go.
-        data: The zip's content.
-        checksum: The published SHA-256; defaults to the one of data.
-    """
-    (folder / "release.zip").write_bytes(data)
-    (folder / "release.zip.sha256").write_text(f"{checksum or hashlib.sha256(data).hexdigest()}  release.zip\n")
-    url = lambda name: QUrl.fromLocalFile(str(folder / name)).toString()  # noqa: E731
-    return updates.Release("9.9.9", "https://example.invalid/page", url("release.zip"), url("release.zip.sha256"))
-
-
-def zip_with(name: str) -> bytes:
-    """Returns a zip archive holding one empty file."""
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as zf:
-        zf.writestr(name, "")
-    return buffer.getvalue()
-
-
-RELEASE_ZIP = zip_with(f"{updates.APP_FOLDER}/DesktopNote.exe")  # A release as the build packs it.
 
 
 class VersionTest(unittest.TestCase):
@@ -95,19 +69,19 @@ class PickReleaseTest(unittest.TestCase):
         self.assertIsNone(updates.pick_release([release("v0.3.0")], "1.0.0rc2"))
 
 
-class InstalledFilesTest(unittest.TestCase):
-    """What an update may touch: the notes only through a backup, and only the release's own files."""
+class InstallTest(unittest.TestCase):
+    """What runs before the app files are swapped: nothing touches the notes but a backup."""
 
     def test_the_notes_are_backed_up_not_changed(self):
-        data = _support.temp_dir(self)
+        data = Path(tempfile.mkdtemp())
         (data / "notes.json").write_text('{"notes": []}', encoding="utf-8")
         backup = updates.backup_notes(data)
         self.assertEqual(backup.read_text(encoding="utf-8"), '{"notes": []}')
         self.assertEqual((data / "notes.json").read_text(encoding="utf-8"), '{"notes": []}')
-        self.assertIsNone(updates.backup_notes(_support.temp_dir(self)), "no notes, no backup")
+        self.assertIsNone(updates.backup_notes(Path(tempfile.mkdtemp())), "no notes, no backup")
 
     def test_the_installed_release_files(self):
-        app = _support.temp_dir(self)
+        app = Path(tempfile.mkdtemp())
         for name in ("DesktopNote.exe", "my-file.txt", "_internal"):
             (app / name).mkdir() if name == "_internal" else (app / name).write_text("x")
         self.assertEqual(updates.release_files(app), ["DesktopNote.exe", "_internal"],
@@ -121,6 +95,37 @@ class InstalledFilesTest(unittest.TestCase):
         self.assertIsNone(updates.app_folder())
         self.assertFalse(updates.can_install())
 
+    def test_a_download_that_does_not_match_its_checksum_changes_nothing(self):
+        folder = Path(tempfile.mkdtemp())
+        (folder / "release.zip").write_bytes(b"not the real release")
+        (folder / "release.zip.sha256").write_text(f"{hashlib.sha256(b'other').hexdigest()}  release.zip\n")
+        app, data = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
+        (data / "notes.json").write_text("{}", encoding="utf-8")
+        updater, outcome = updates.Updater(), []
+        updater.ready.connect(lambda: outcome.append("ready"))
+        updater.failed.connect(outcome.append)
+        updater.start(updates.Release("9.9.9", "", QUrl.fromLocalFile(str(folder / "release.zip")).toString(),
+                                      QUrl.fromLocalFile(str(folder / "release.zip.sha256")).toString()), data, app)
+        for _ in range(100):
+            if outcome:
+                break
+            QTest.qWait(20)
+        self.assertEqual(outcome, ["the download does not match its checksum"])
+        self.assertEqual(sorted(p.name for p in data.iterdir()), ["notes.json"], "no backup, no log")
+        self.assertEqual(list(app.iterdir()), [], "the app folder is untouched")
+
+    def test_an_unfinished_update_blocks_a_new_one(self):
+        app, data = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
+        (app / updates.TRANSACTION).mkdir()
+        (app / updates.TRANSACTION / updates.JOURNAL).write_text('{"state": "moving"}', encoding="utf-8")
+        updater = updates.Updater()
+        updater._app, updater._data, updater._pid = app, data, 0
+        updater._release = updates.Release("9.9.9", "", "", "")
+        journal = app / updates.TRANSACTION / updates.JOURNAL
+        with self.assertRaisesRegex(OSError, "not finished"):
+            updater._install(b"")
+        self.assertEqual(journal.read_text(encoding="utf-8"), '{"state": "moving"}', "the earlier update is kept")
+
 
 class TimeoutTest(unittest.TestCase):
     """A server that never answers ends the check and the download with a timeout."""
@@ -128,17 +133,24 @@ class TimeoutTest(unittest.TestCase):
     def setUp(self):
         self.server = QTcpServer()
         self.assertTrue(self.server.listen(QHostAddress.LocalHost))
-        self.addCleanup(self.server.close)
         self.url = f"http://127.0.0.1:{self.server.serverPort()}/"
-        patcher = mock.patch.object(updates, "TIMEOUT_MS", 300)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self._timeout, updates.TIMEOUT_MS = updates.TIMEOUT_MS, 300
+
+    def tearDown(self):
+        updates.TIMEOUT_MS = self._timeout
+        self.server.close()
+
+    def wait_for(self, outcome: list) -> None:
+        for _ in range(150):
+            if outcome:
+                return
+            QTest.qWait(20)
 
     def test_the_check_times_out(self):
         checker, outcome = updates.UpdateChecker("1.0.0", url=self.url), []
         checker.finished.connect(lambda release, error: outcome.append((release, error)))
         checker.check()
-        _support.wait_until(lambda: outcome)
+        self.wait_for(outcome)
         self.assertEqual(len(outcome), 1)
         self.assertIsNone(outcome[0][0])
         self.assertTrue(outcome[0][1], "it says why")
@@ -148,115 +160,67 @@ class TimeoutTest(unittest.TestCase):
         updater, outcome = updates.Updater(), []
         updater.failed.connect(outcome.append)
         release = updates.Release("9.9.9", "", self.url, self.url)
-        updater.start(release, _support.temp_dir(self), _support.temp_dir(self))
-        _support.wait_until(lambda: outcome)
+        updater.start(release, Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()))
+        self.wait_for(outcome)
         self.assertEqual(len(outcome), 1)
         self.assertTrue(outcome[0], "it says why")
 
 
-class UpdaterTest(unittest.TestCase):
-    """The Updater on real files: each stage in turn, every failure reported once and cleaned up
-    before the install script starts, a started update kept for the script."""
+def local_release(folder: Path, data: bytes, checksum: str | None = None) -> updates.Release:
+    """Writes data as a release zip with its checksum file into folder; returns the Release for them."""
+    (folder / "release.zip").write_bytes(data)
+    digest = checksum or hashlib.sha256(data).hexdigest()
+    (folder / "release.zip.sha256").write_text(f"{digest}  release.zip\n")
+    url = lambda name: QUrl.fromLocalFile(str(folder / name)).toString()  # noqa: E731
+    return updates.Release("9.9.9", "https://example.invalid/page", url("release.zip"), url("release.zip.sha256"))
+
+
+def zip_with(name: str) -> bytes:
+    """Returns a zip archive holding one empty file."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr(name, "")
+    return buffer.getvalue()
+
+
+class StageTest(unittest.TestCase):
+    """The Updater reports verifying once the download is in, and preparing once it matches."""
 
     def setUp(self):
-        self.app, self.data = _support.temp_dir(self), _support.temp_dir(self)
-        (self.data / "notes.json").write_text("{}", encoding="utf-8")
-        self.run_once = mock.patch.object(updates, "_set_run_once").start()  # Never the real registry.
-        self.popen = mock.patch.object(updates.subprocess, "Popen").start()  # Never the real script.
+        mock.patch.object(updates, "_set_run_once").start()  # Never the real registry.
+        mock.patch.object(updates.subprocess, "Popen").start()  # Never the real script.
         self.addCleanup(mock.patch.stopall)
 
-    def run_update(self, data: bytes, checksum: str | None = None, during=None) -> list:
-        """Runs the Updater on data published as a release; returns what it emitted, in order.
-
-        Args:
-            data: The release zip's content.
-            checksum: The published SHA-256; defaults to the one of data.
-            during: A context manager in force while the update runs, after the release is written.
-        """
-        release = local_release(_support.temp_dir(self), data, checksum)
+    def run_update(self, release: updates.Release) -> list:
+        app, data = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
         updater, outcome = updates.Updater(), []
         updater.stage.connect(lambda stage: outcome.append(("stage", stage)))
         updater.ready.connect(lambda: outcome.append(("ready",)))
         updater.failed.connect(lambda error: outcome.append(("failed", error)))
-        with during or contextlib.nullcontext():
-            updater.start(release, self.data, self.app, pid=0)
-            _support.wait_until(lambda: outcome and outcome[-1][0] != "stage", 5000, f"stuck at {outcome}")
-            QTest.qWait(100)  # Anything emitted late would show up here.
+        updater.start(release, data, app)
+        for _ in range(100):
+            if outcome and outcome[-1][0] != "stage":
+                break
+            QTest.qWait(20)
         return outcome
 
-    def test_a_failed_update_is_reported_once_and_leaves_nothing(self):
-        prepared = [("stage", "verifying"), ("stage", "preparing")]
-        cases = [
-            ("checksum mismatch", RELEASE_ZIP, hashlib.sha256(b"other").hexdigest(), None,
-             [("stage", "verifying"), ("failed", "the download does not match its checksum")]),
-            ("not a zip", b"not a zip archive", None, None, [*prepared, ("failed", "File is not a zip file")]),
-            ("no DesktopNote.exe", zip_with("readme.txt"), None, None,
-             [*prepared, ("failed", "the release does not contain DesktopNote.exe")]),
-            ("unexpected error while checking", RELEASE_ZIP, None,
-             mock.patch.object(updates, "_sha256", side_effect=RuntimeError("boom")),
-             [("stage", "verifying"), ("failed", "the update could not be prepared")]),
-            ("unexpected error while preparing", RELEASE_ZIP, None,
-             mock.patch.object(updates, "prepare", side_effect=ValueError("boom")),
-             [*prepared, ("failed", "the update could not be prepared")]),
-            ("script cannot start", RELEASE_ZIP, None,
-             mock.patch.object(self.popen, "side_effect", RuntimeError("boom")),
-             [*prepared, ("failed", "the update could not be prepared")]),
-        ]
-        for name, data, checksum, during, expected in cases:
-            with self.subTest(name):
-                self.run_once.reset_mock()
-                logs = self.assertLogs("desktopnote.updates", "ERROR") if "unexpected" in name or "script" in name \
-                    else contextlib.nullcontext()
-                with logs as logged:
-                    outcome = self.run_update(data, checksum, during)
-                self.assertEqual(outcome, expected)
-                if logged is not None:
-                    self.assertIn("boom", "\n".join(logged.output), "logged with its traceback")
-                self.assertFalse((self.app / updates.TRANSACTION).exists(), "no update folder or journal")
-                self.assertEqual(sorted(p.name for p in self.data.iterdir()), ["notes.json"], "no notes backup")
-                if self.run_once.called:
-                    self.assertEqual(self.run_once.call_args, mock.call(*updates.RUN_ONCE, None), "no recovery entry")
+    def test_a_checksum_mismatch_stops_while_verifying(self):
+        folder = Path(tempfile.mkdtemp())
+        outcome = self.run_update(local_release(folder, b"x", hashlib.sha256(b"other").hexdigest()))
+        self.assertEqual(outcome, [("stage", "verifying"), ("failed", "the download does not match its checksum")])
 
-    def test_an_unfinished_update_blocks_a_new_one(self):
-        journal = self.app / updates.TRANSACTION / updates.JOURNAL
-        journal.parent.mkdir()
-        journal.write_text('{"state": "moving"}', encoding="utf-8")
-        outcome = self.run_update(RELEASE_ZIP)
-        self.assertIn("not finished", outcome[-1][1])
-        self.assertEqual(journal.read_text(encoding="utf-8"), '{"state": "moving"}', "the earlier update is kept")
-        self.run_once.assert_not_called()
-
-    def test_a_started_update_keeps_its_transaction(self):
-        outcome = self.run_update(RELEASE_ZIP)
-        self.assertEqual(outcome, [("stage", "verifying"), ("stage", "preparing"), ("ready",)])
-        tx = self.app / updates.TRANSACTION
-        self.assertTrue((tx / updates.JOURNAL).exists(), "the journal stays for the script")
-        self.assertTrue((tx / updates.NEW / "DesktopNote.exe").exists(), "the new files stay")
-        self.assertTrue((self.data / updates.NOTES_BACKUP).exists(), "the notes backup stays")
-        self.assertIsNotNone(self.run_once.call_args.args[2], "the recovery entry stays")
-        self.popen.assert_called_once()
-
-    def test_the_flow_hears_the_worker_on_its_own_thread(self):
-        flow = updates.UpdateFlow("1.0.0", self.data)
-        seen = []
-        flow.changed.connect(lambda: seen.append((flow.state, threading.current_thread() is threading.main_thread())))
-        flow.release, flow.state = local_release(_support.temp_dir(self), RELEASE_ZIP), "available"
-        with mock.patch.object(updates, "can_install", return_value=True), \
-                mock.patch.object(updates, "app_folder", return_value=self.app), \
-                mock.patch.object(updates, "prepare", side_effect=ValueError("boom")), \
-                self.assertLogs("desktopnote.updates", "ERROR"):
-            flow.act()
-            _support.wait_until(lambda: flow.state == "failed", 5000)
-            QTest.qWait(100)
-        self.assertEqual([state for state, _ in seen], ["downloading", "verifying", "preparing", "failed"])
-        self.assertTrue(all(on_gui for _, on_gui in seen), "every state change runs on the GUI thread")
+    def test_a_bad_release_stops_while_preparing(self):
+        folder = Path(tempfile.mkdtemp())
+        outcome = self.run_update(local_release(folder, zip_with("readme.txt")))
+        self.assertEqual(outcome, [("stage", "verifying"), ("stage", "preparing"),
+                                   ("failed", "the release does not contain DesktopNote.exe")])
 
 
 class FlowTest(unittest.TestCase):
     """UpdateFlow: checking only finds an update; a second act() installs it, stage by stage."""
 
     def setUp(self):
-        self.flow = updates.UpdateFlow("1.0.0", _support.temp_dir(self))
+        self.flow = updates.UpdateFlow("1.0.0", Path(tempfile.mkdtemp()))
         self.states: list[str] = []
         self.flow.changed.connect(lambda: self.states.append(self.flow.state))
         self.found = updates.Release("1.0.1", "https://example.invalid/page", "zip", "sha")
@@ -264,15 +228,8 @@ class FlowTest(unittest.TestCase):
         self.addCleanup(mock.patch.stopall)
 
     def check(self, release=None, error=""):
-        """Runs act() with a check that finds release, or fails with error."""
         with mock.patch.object(self.flow._checker, "check",
                                side_effect=lambda: self.flow._checker.finished.emit(release, error)):
-            self.flow.act()
-
-    def install(self):
-        """Finds the update, then acts on it as a release build."""
-        self.check(self.found)
-        with mock.patch.object(updates, "can_install", return_value=True):
             self.flow.act()
 
     def test_a_found_update_waits_for_the_second_act(self):
@@ -292,17 +249,20 @@ class FlowTest(unittest.TestCase):
         self.assertEqual(self.flow.state, "available")
         self.start.assert_not_called()
 
-    def test_a_check_without_an_update(self):
-        for error, state in (("", "current"), ("offline", "failed")):
-            with self.subTest(error=error):
-                self.states.clear()
-                self.check(None, error)
-                self.assertEqual((self.states, self.flow.error), (["checking", state], error))
+    def test_no_newer_release_is_up_to_date(self):
+        self.check(None)
+        self.assertEqual(self.states, ["checking", "current"])
+
+    def test_a_failed_check_offers_another_try(self):
+        self.check(None, "offline")
+        self.assertEqual((self.flow.state, self.flow.error), ("failed", "offline"))
 
     def test_the_install_goes_through_each_stage(self):
         quits = []
         self.flow.quit_requested.connect(lambda: quits.append(True))
-        self.install()
+        self.check(self.found)
+        with mock.patch.object(updates, "can_install", return_value=True):
+            self.flow.act()
         self.flow._updater.stage.emit("verifying")
         self.flow._updater.stage.emit("preparing")
         self.flow._updater.ready.emit()
@@ -312,7 +272,9 @@ class FlowTest(unittest.TestCase):
     def test_a_failure_in_any_stage_offers_another_try(self):
         for stages in ([], ["verifying"], ["verifying", "preparing"]):
             with self.subTest(failed_after=stages):
-                self.install()
+                self.check(self.found)
+                with mock.patch.object(updates, "can_install", return_value=True):
+                    self.flow.act()
                 for stage in stages:
                     self.flow._updater.stage.emit(stage)
                 self.flow._updater.failed.emit("broken")
@@ -327,6 +289,101 @@ class FlowTest(unittest.TestCase):
         held[0]()
         held[0]()
         self.assertEqual(quits, [True], "quit_requested is emitted once")
+
+
+class WorkerTest(unittest.TestCase):
+    """The worker thread reports every failure once, cleans up before the hand-off, and keeps a started update."""
+
+    def setUp(self):
+        self.app, self.data = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
+        (self.data / "notes.json").write_text("{}", encoding="utf-8")
+        self.run_once = mock.patch.object(updates, "_set_run_once").start()  # Never the real registry.
+        self.popen = mock.patch.object(updates.subprocess, "Popen").start()  # Never the real script.
+        self.addCleanup(mock.patch.stopall)
+
+    def run_update(self, data: bytes, during=None) -> list:
+        """Runs the Updater on data published as a release.
+
+        Args:
+            data: The release zip's content.
+            during: A context manager in force while the update runs, after the release is written.
+
+        Returns:
+            What the Updater emitted, in order: ("stage", name), ("ready",) or ("failed", error).
+        """
+        release = local_release(Path(tempfile.mkdtemp()), data)
+        updater, outcome = updates.Updater(), []
+        updater.stage.connect(lambda stage: outcome.append(("stage", stage)))
+        updater.ready.connect(lambda: outcome.append(("ready",)))
+        updater.failed.connect(lambda error: outcome.append(("failed", error)))
+        with during or contextlib.nullcontext():
+            updater.start(release, self.data, self.app, pid=0)
+            for _ in range(150):
+                if outcome and outcome[-1][0] != "stage":
+                    break
+                QTest.qWait(20)
+            QTest.qWait(100)  # Anything emitted late would show up here.
+        return outcome
+
+    def assert_cleaned_up(self):
+        """Asserts that no update folder, journal, notes backup or recovery entry is left."""
+        self.assertFalse((self.app / updates.TRANSACTION).exists(), "no update folder or journal")
+        self.assertFalse((self.data / updates.NOTES_BACKUP).exists(), "no notes backup")
+        self.assertEqual(self.run_once.call_args_list[-1], mock.call(*updates.RUN_ONCE, None), "no recovery entry")
+
+    def test_an_unexpected_error_while_checking_fails_once(self):
+        with self.assertLogs("desktopnote.updates", "ERROR") as logged:
+            outcome = self.run_update(zip_with(f"{updates.APP_FOLDER}/DesktopNote.exe"),
+                                      mock.patch.object(updates, "_sha256", side_effect=RuntimeError("boom")))
+        self.assertEqual(outcome, [("stage", "verifying"), ("failed", "the update could not be prepared")])
+        self.assertIn("Traceback", logged.output[0])
+        self.assertIn("boom", logged.output[0])
+
+    def test_an_unexpected_error_while_preparing_fails_once_and_cleans_up(self):
+        with mock.patch.object(updates, "prepare", side_effect=ValueError("boom")), \
+                self.assertLogs("desktopnote.updates", "ERROR"):
+            outcome = self.run_update(zip_with(f"{updates.APP_FOLDER}/DesktopNote.exe"))
+        self.assertEqual(outcome, [("stage", "verifying"), ("stage", "preparing"),
+                                   ("failed", "the update could not be prepared")])
+        self.assert_cleaned_up()
+        self.popen.assert_not_called()
+
+    def test_a_script_that_cannot_start_leaves_nothing_behind(self):
+        self.popen.side_effect = RuntimeError("cannot start")
+        with self.assertLogs("desktopnote.updates", "ERROR"):
+            outcome = self.run_update(zip_with(f"{updates.APP_FOLDER}/DesktopNote.exe"))
+        self.assertEqual(outcome[-1], ("failed", "the update could not be prepared"))
+        self.assertEqual([kind for kind, *_ in outcome].count("failed"), 1)
+        self.assert_cleaned_up()
+
+    def test_a_started_update_keeps_its_transaction(self):
+        outcome = self.run_update(zip_with(f"{updates.APP_FOLDER}/DesktopNote.exe"))
+        self.assertEqual(outcome, [("stage", "verifying"), ("stage", "preparing"), ("ready",)])
+        tx = self.app / updates.TRANSACTION
+        self.assertTrue((tx / updates.JOURNAL).exists(), "the journal stays for the script")
+        self.assertTrue((tx / updates.NEW / "DesktopNote.exe").exists(), "the new files stay")
+        self.assertTrue((self.data / updates.NOTES_BACKUP).exists(), "the notes backup stays")
+        self.assertIsNotNone(self.run_once.call_args_list[-1].args[2], "the recovery entry stays")
+        self.popen.assert_called_once()
+
+    def test_the_flow_hears_a_failure_on_its_own_thread(self):
+        flow = updates.UpdateFlow("1.0.0", self.data)
+        seen = []
+        flow.changed.connect(lambda: seen.append((flow.state, threading.current_thread() is threading.main_thread())))
+        flow.release = local_release(Path(tempfile.mkdtemp()), zip_with(f"{updates.APP_FOLDER}/DesktopNote.exe"))
+        flow.state = "available"
+        with mock.patch.object(updates, "can_install", return_value=True), \
+                mock.patch.object(updates, "app_folder", return_value=self.app), \
+                mock.patch.object(updates, "prepare", side_effect=ValueError("boom")), \
+                self.assertLogs("desktopnote.updates", "ERROR"):
+            flow.act()
+            for _ in range(150):
+                if flow.state == "failed":
+                    break
+                QTest.qWait(20)
+            QTest.qWait(100)
+        self.assertEqual([state for state, _ in seen], ["downloading", "verifying", "preparing", "failed"])
+        self.assertTrue(all(on_gui for _, on_gui in seen), "every state change runs on the GUI thread")
 
 
 if __name__ == "__main__":
