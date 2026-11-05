@@ -28,6 +28,19 @@ NEW_FILES = {"DesktopNote.cmd": None, "_internal/version.txt": b"new", "_interna
 USER_FILE = ("my-file.txt", b"the user's own file")
 
 
+_GONE_PID: int | None = None
+
+
+def gone_pid() -> int:
+    """Returns the id of a process that has ended, for the script to wait for (made once per run)."""
+    global _GONE_PID
+    if _GONE_PID is None:
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()
+        _GONE_PID = gone.pid
+    return _GONE_PID
+
+
 def run_once_value() -> str | None:
     """Returns the test RunOnce value, or None."""
     import winreg
@@ -79,6 +92,7 @@ class RecoveryTestCase(unittest.TestCase):
 
     @staticmethod
     def files_of(folder: Path) -> dict[str, bytes]:
+        """Returns every file under folder by its relative path, with its content."""
         return {p.relative_to(folder).as_posix(): p.read_bytes() for p in folder.rglob("*") if p.is_file()}
 
     def snapshot(self) -> dict[str, bytes]:
@@ -87,18 +101,23 @@ class RecoveryTestCase(unittest.TestCase):
                 if not rel.startswith(updates.TRANSACTION + "/")}
 
     def run_script(self, stop_at: str | None = None, recover: bool = False) -> int:
+        """Runs the update script's swap (or its recovery) and returns its exit code.
+
+        Args:
+            stop_at: The step at which the script stops, as a power cut would stop it.
+            recover: Runs the recovery, as at the next login, instead of the swap.
+        """
         env = {k: v for k, v in os.environ.items() if k != "DESKTOPNOTE_TEST_STOP_AT"}
         if stop_at:
             env["DESKTOPNOTE_TEST_STOP_AT"] = stop_at
         if recover:
             args = updates._powershell(self.tx / updates.SCRIPT, "-Recover")
         else:
-            gone = subprocess.Popen([sys.executable, "-c", "pass"])
-            gone.wait()
-            args = [*self.command, str(gone.pid)]
+            args = [*self.command, str(gone_pid())]
         return subprocess.run(args, env=env, timeout=120).returncode
 
     def journal(self) -> dict:
+        """Returns the update's journal."""
         return json.loads((self.tx / updates.JOURNAL).read_text(encoding="utf-8"))
 
     def starts(self, count: int) -> list[str]:
@@ -145,19 +164,17 @@ class RecoveryTestCase(unittest.TestCase):
 class SwapTest(RecoveryTestCase):
     """Without interruption, an update installs, or rolls back when the new version does not start."""
 
-    def test_an_update_that_starts_is_kept(self):
-        self.assertEqual(run_once_value(), self.journal()["run_once_command"], "recovery is set up first")
-        self.assertEqual(self.run_script(), 0)
-        self.assert_new_installed(["new"])
-
     def test_a_new_version_that_does_not_start_is_rolled_back(self):
         self.write(self.tx / updates.NEW, {"DesktopNote.cmd": None}, "new", confirms=False)
+        self.command = updates.prepare(self.app, "9.9.9", self.data, exe="DesktopNote.cmd", started_s=1,
+                                       run_once=TEST_RUN_ONCE)  # Nothing confirms: a short deadline will do.
         self.assertEqual(self.run_script(), 0)
         self.assert_old_installed(["new", "old"])
         self.assertIn("did not start", (self.data / "desktopnote.log").read_text(encoding="utf-8-sig"))
 
-    def test_a_completed_update_is_not_rolled_back_by_a_later_recovery(self):
-        self.run_script()
+    def test_an_update_that_starts_is_kept_even_by_a_later_recovery(self):
+        self.assertEqual(run_once_value(), self.journal()["run_once_command"], "recovery is set up first")
+        self.assertEqual(self.run_script(), 0)
         self.assert_new_installed(["new"])
         self.assert_starts_as_is(self.new_snapshot)
 

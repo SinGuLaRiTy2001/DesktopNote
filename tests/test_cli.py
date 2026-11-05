@@ -1,35 +1,31 @@
 """Command-line tests: agents and scripts look at notes, make notes, and add, change or delete items.
 
-The commands run against a temporary data folder (DESKTOPNOTE_HOME), never the user's notes.
+The commands run against the tests' own data folder (DESKTOPNOTE_HOME), never the user's notes.
 """
 import getpass
 import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-os.environ["DESKTOPNOTE_HOME"] = tempfile.mkdtemp(prefix="desktopnote-cli-test-")  # Before desktopnote loads.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import QCoreApplication  # noqa: E402
 from PySide6.QtNetwork import QLocalServer  # noqa: E402
 
 from desktopnote import commands, instance  # noqa: E402
 from desktopnote.models import Item, Note  # noqa: E402
-from desktopnote.storage import Store  # noqa: E402
+from desktopnote.storage import Store, data_dir  # noqa: E402
+from tests import _support  # noqa: E402
 
-_app = QCoreApplication.instance() or QCoreApplication(sys.argv)
+_app = _support.qapp()
 
 
 def cli(*args: str) -> tuple[int, dict]:
-    """Runs the command line in its own process, as an agent would, and returns (exit code, JSON)."""
-    done = subprocess.run([sys.executable, "-m", "desktopnote.cli", *args], cwd=ROOT, capture_output=True,
-                          text=True, encoding="utf-8", env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    """Runs the command line in its own process, as an agent would; returns (exit code, JSON or {})."""
+    done = _support.run_cli(data_dir(), *args)
     return done.returncode, json.loads(done.stdout) if done.stdout.strip() else {}
 
 
@@ -181,9 +177,7 @@ class OfflineTest(unittest.TestCase):
                 self.assertIn("no item", result["error"])
 
     def test_invalid_arguments_exit_with_2(self):
-        done = subprocess.run([sys.executable, "-m", "desktopnote.cli", "add", "bogus", "x"], cwd=ROOT,
-                              capture_output=True, text=True)
-        self.assertEqual(done.returncode, 2)
+        self.assertEqual(cli("add", "bogus", "x")[0], 2)
 
 
 class LiveTest(unittest.TestCase):
@@ -199,16 +193,18 @@ class LiveTest(unittest.TestCase):
         notes = [Note(title="Work")]
         server = QLocalServer()
         self.assertTrue(server.listen(name))
+        self.addCleanup(server.close)
         server.newConnection.connect(lambda: answer(server.nextPendingConnection(),
                                                     lambda request: commands.run(request, notes)[0], lambda: None))
         proc = subprocess.Popen([sys.executable, "-m", "desktopnote.cli", "add", "todo", "Live", "--note", "Work"],
-                                cwd=ROOT, stdout=subprocess.PIPE, text=True, encoding="utf-8")
+                                cwd=_support.ROOT, stdout=subprocess.PIPE, text=True, encoding="utf-8",
+                                env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+        self.addCleanup(proc.stdout.close)
         deadline = time.monotonic() + 15
         while proc.poll() is None and time.monotonic() < deadline:
             _app.processEvents()
             time.sleep(0.01)
         out = proc.stdout.read()
-        server.close()
         self.assertEqual(proc.returncode, 0, out)
         self.assertEqual([i.text for i in notes[0].items], ["Live"], "the running app's notes got the item")
         self.assertFalse(Store().path.exists() and "Live" in Store().path.read_text(encoding="utf-8"),

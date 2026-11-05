@@ -2,29 +2,29 @@
 
 Builds real note windows; CI runs them with QT_QPA_PLATFORM=offscreen.
 """
-import os
 import sys
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtWidgets import QAbstractButton, QApplication, QLabel, QWidget  # noqa: E402
+from PySide6.QtWidgets import QAbstractButton, QLabel, QWidget  # noqa: E402
 
-from desktopnote import i18n  # noqa: E402
+from desktopnote import i18n, motion  # noqa: E402
 from desktopnote.models import Item, Note  # noqa: E402
 from desktopnote.note_window import NoteWindow  # noqa: E402
 from desktopnote.theme import DARK, LIGHT, TEXT_SCALES  # noqa: E402
+from tests import _support  # noqa: E402
 
-_app = QApplication.instance() or QApplication(sys.argv)
-_app.setQuitOnLastWindowClosed(False)
+_app = _support.qapp()
 
 
 class NarrowNoteTextTest(unittest.TestCase):
     """At its minimum width, a note shows every text of its bottom bars without cutting it."""
 
-    def tearDown(self):
-        i18n.set_language(i18n.DEFAULT_LANGUAGE)
+    def setUp(self):
+        hover = motion.HoverFx.color
+        self.addCleanup(setattr, motion.HoverFx, "color", hover)  # Every note window sets it for its theme.
 
     def test_bottom_bars_fit_at_minimum_width(self):
         for language in i18n.LANGUAGES:
@@ -34,7 +34,7 @@ class NarrowNoteTextTest(unittest.TestCase):
                         self.assert_bottom_bars_fit(language, scale, theme)
 
     def assert_bottom_bars_fit(self, language, scale, theme):
-        i18n.set_language(language)
+        _support.use_language(self, language)
         win = NoteWindow(Note(w=100, items=[Item(type="todo", text="x")]), theme, 60, scale)
         try:
             win.retranslate()
@@ -54,5 +54,4 @@ class NarrowNoteTextTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     unittest.main()

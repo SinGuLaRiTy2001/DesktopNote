@@ -8,18 +8,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import QEvent, QObject, QPointF  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPointF  # noqa: E402
 from PySide6.QtGui import QEnterEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
+from PySide6.QtWidgets import QMenu  # noqa: E402
 
 from desktopnote import motion  # noqa: E402
 from desktopnote.models import Item, Note  # noqa: E402
 from desktopnote.note_window import NoteWindow  # noqa: E402
 from desktopnote.theme import LIGHT  # noqa: E402
+from tests import _support  # noqa: E402
 
-_app = QApplication.instance() or QApplication(sys.argv)
-_app.setQuitOnLastWindowClosed(False)
+_app = _support.qapp()
 
 
 class LifecycleTest(unittest.TestCase):
@@ -28,14 +28,17 @@ class LifecycleTest(unittest.TestCase):
     def setUp(self):
         self.win = NoteWindow(Note(items=[Item(text="a"), Item(type="todo", text="b")]), LIGHT, 60, 1.0)
         self.win.show()
-        QTest.qWait(100)
+        _support.wait_until(self.win.isVisible)
 
     def tearDown(self):
         self.win.close()
         self.win.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
 
     def objects(self) -> int:
-        QTest.qWait(300)  # Lets running transitions end and deferred deletes happen.
+        """Returns the number of objects under the note once transitions and deferred deletes are done."""
+        _support.wait_until(lambda: not motion.Tween._running, 3000, "transitions still running")
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
         return len(self.win.findChildren(QObject))
 
     def test_hovering_leaves_nothing_behind(self):

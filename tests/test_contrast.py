@@ -42,6 +42,8 @@ MEASURED = {
 }
 
 
+# luminance() and contrast() repeat theme.luminance() and theme.contrast() on purpose: theme.glow_color
+# relies on theme.contrast, so the tests check it against an independent copy of the formula.
 def luminance(color: str) -> float:
     """Returns the WCAG relative luminance of a hex colour (#RRGGBB or #AARRGGBB)."""
     hex_digits = color.lstrip("#")[-6:]
