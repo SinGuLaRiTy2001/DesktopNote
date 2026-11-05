@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 
-from PySide6.QtCore import QEasingCurve, QEvent, QRectF, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEasingCurve, QElapsedTimer, QEvent, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QCursor, QDesktopServices, QFont, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -90,6 +90,11 @@ class TextButton(QAbstractButton):
         self._leaving = False  # The shown text is fading out.
         self._hold = QTimer(self, singleShot=True, interval=TEXT_HOLD_MS)
         self._hold.timeout.connect(self._next)
+        self._seen = ""  # The shown text, once painted fully faded in and at rest.
+        self._seen_clock = QElapsedTimer()  # Since _seen was painted.
+        self._seen_timer = QTimer(self, singleShot=True)  # Calls what waits for _seen, TEXT_HOLD_MS after.
+        self._seen_timer.setTimerType(Qt.PreciseTimer)
+        self._seen_timer.timeout.connect(self._call_seen)
 
     def set_colors(self, rest: str, hover: str) -> None:
         """Sets the colours at rest and on hover (CSS colours)."""
@@ -134,14 +139,13 @@ class TextButton(QAbstractButton):
         return not self._queue and not self._fading and self._shown == self.text()
 
     def call_when_shown(self, text: str, fn: Callable[[], None]) -> None:
-        """Calls ``fn`` once ``text`` has faded in, or at once if it already has."""
-        if self._shown == text and self.is_settled():
-            fn()
-        else:
-            self._waiting.append((text, fn))
+        """Calls ``fn`` once ``text`` has been painted fully faded in and then shown TEXT_HOLD_MS."""
+        self._waiting.append((text, fn))
+        self._arm_seen()
 
     def flush_waiting(self) -> None:
         """Calls every function still waiting for its text, at once."""
+        self._seen_timer.stop()
         waiting, self._waiting = self._waiting, []
         for _, fn in waiting:
             fn()
@@ -149,6 +153,7 @@ class TextButton(QAbstractButton):
     def _show(self, text: str) -> None:
         """Paints ``text`` from now on."""
         self._shown = text
+        self._seen = ""
         self.updateGeometry()
         self.update()
 
@@ -184,8 +189,17 @@ class TextButton(QAbstractButton):
         self._hold.start()
         if not self._queue:
             self.settled.emit()
-        ready = [fn for text, fn in self._waiting if text == self._shown]
-        self._waiting = [(text, fn) for text, fn in self._waiting if text != self._shown]
+        self.update()  # The next paint shows the text at rest and marks it seen (paintEvent).
+
+    def _arm_seen(self) -> None:
+        """Starts the timer that calls what waits for the seen text, TEXT_HOLD_MS after its paint."""
+        if self._seen and any(text == self._seen for text, _ in self._waiting):
+            self._seen_timer.start(max(0, TEXT_HOLD_MS - self._seen_clock.elapsed()))
+
+    def _call_seen(self) -> None:
+        """Calls what waits for the text that is seen."""
+        ready = [fn for text, fn in self._waiting if text == self._seen]
+        self._waiting = [(text, fn) for text, fn in self._waiting if text != self._seen]
         for fn in ready:
             fn()
 
@@ -272,6 +286,10 @@ class TextButton(QAbstractButton):
         p.setFont(self.font())
         p.drawText(QRectF(self.rect()).adjusted(self.inset, 0, 0, 0).translated(self._dx, 0), self.alignment,
                    self._shown)
+        if self._shown and not self._seen and not self._fading and self._opacity == 1.0 and self._dx == 0.0:
+            self._seen = self._shown
+            self._seen_clock.start()
+            self._arm_seen()
 
 
 class _VersionLine(QWidget):
@@ -445,7 +463,10 @@ class AboutWindow(GlassWindow):
         self.btn_update.setEnabled(self._updates.state in self._ACTIONS and self.btn_update.is_settled())
 
     def _quit_once_shown(self, quit: Callable[[], None]) -> bool:
-        """Calls ``quit`` once the "installing" text has faded in; returns False when not shown."""
+        """Calls ``quit`` once the "installing" text has been seen (see TextButton.call_when_shown).
+
+        Returns False, and calls nothing, while the window is closing or hidden.
+        """
         if self.closing or not self.isVisible():
             return False
         self.btn_update.call_when_shown(tr("update.installing"), quit)
@@ -522,6 +543,11 @@ class AboutWindow(GlassWindow):
             self._updates.before_quit = None
         self.btn_update.flush_waiting()
         super().closeEvent(e)
+
+    def hideEvent(self, e):
+        """Calls at once what waits for the update button's text, such as a waiting update's quit."""
+        self.btn_update.flush_waiting()
+        super().hideEvent(e)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)

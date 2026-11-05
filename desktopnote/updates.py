@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -35,6 +36,8 @@ from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequ
 from . import i18n, win_effects
 from .i18n import tr
 from .win_effects import CREATE_NO_WINDOW
+
+log = logging.getLogger(__name__)
 
 REPO = "SinGuLaRiTy2001/DesktopNote"
 RELEASES_API = f"https://api.github.com/repos/{REPO}/releases?per_page=20"
@@ -587,24 +590,34 @@ class Updater(QObject):
         threading.Thread(target=self._verify_and_install, args=(data,), name="DesktopNote update").start()
 
     def _verify_and_install(self, data: bytes) -> None:
-        """Checks data against the SHA-256, then installs it; runs on the worker thread."""
-        if hashlib.sha256(data).hexdigest() != self._expected:
-            self.failed.emit("the download does not match its checksum")
-            return
-        self.stage.emit("preparing")
+        """Checks data against the SHA-256, then installs it; runs on the worker thread.
+
+        Emits failed once if this stops for any ordinary exception; an unexpected one is logged
+        with its traceback and reported as "the update could not be prepared".
+        """
         try:
+            if hashlib.sha256(data).hexdigest() != self._expected:
+                self.failed.emit("the download does not match its checksum")
+                return
+            self.stage.emit("preparing")
             self._install(data)
         except (OSError, zipfile.BadZipFile) as exc:
             self.failed.emit(str(exc))
+        except Exception:
+            log.exception("The update could not be prepared")
+            self.failed.emit("the update could not be prepared")
 
     def _install(self, data: bytes) -> None:
         """Unpacks the release into TRANSACTION, backs up the notes and starts the update script.
 
-        The update folder, the notes backup and the recovery entry are removed again if this stops
-        before the script runs.
+        The update folder, the notes backup and the recovery entry are removed again if any
+        ordinary exception stops this before the script has started; once it has started, they stay
+        for the script, and ready is emitted.
 
         Raises:
             OSError: If an earlier update is not finished, or the release cannot be unpacked.
+            zipfile.BadZipFile: If the download is not a zip archive.
+            Exception: Anything else that stopped the preparation, after the cleanup.
         """
         tx = self._app / TRANSACTION
         if (tx / JOURNAL).exists():
@@ -624,13 +637,20 @@ class Updater(QObject):
             backup_notes(self._data)
             command = prepare(self._app, self._release.version, self._data)
             subprocess.Popen([*command, str(self._pid)], creationflags=CREATE_NO_WINDOW, close_fds=True)
-        except (OSError, zipfile.BadZipFile):
+        except Exception:
             # Removes the download, the recovery entry and the notes backup; the app folder is unchanged.
-            _set_run_once(*RUN_ONCE, None)
-            shutil.rmtree(tx, ignore_errors=True)
-            (self._data / NOTES_BACKUP).unlink(missing_ok=True)
+            self._discard(tx)
             raise
         self.ready.emit()
+
+    def _discard(self, tx: Path) -> None:
+        """Removes the recovery entry, the update folder and the notes backup, logging what fails."""
+        for step in (lambda: _set_run_once(*RUN_ONCE, None), lambda: shutil.rmtree(tx, ignore_errors=True),
+                     lambda: (self._data / NOTES_BACKUP).unlink(missing_ok=True)):
+            try:
+                step()
+            except Exception:
+                log.exception("Removing an unfinished update failed")
 
 
 class UpdateFlow(QObject):
@@ -706,7 +726,11 @@ class UpdateFlow(QObject):
         """
         self._set("installing")
         hold = self.before_quit
-        if hold is None or not hold(self._quit):
+        try:
+            held = hold is not None and hold(self._quit)
+        except RuntimeError:  # The About window that set before_quit is already deleted.
+            held = False
+        if not held:
             self._quit()
 
     def _quit(self) -> None:
