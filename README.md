@@ -188,6 +188,14 @@ click **Check for Updates**: it asks GitHub for the latest release and, if you i
 downloads it from there. Scripts or AI agents that you give access through the command line may
 handle note data according to their own behavior.
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by
+[SignPath Foundation](https://signpath.org/).
+
+- Authors, reviewers and approvers: [Jian Wen](https://github.com/SinGuLaRiTy2001)
+- Privacy: see [Data and privacy](#data-and-privacy).
+
 ## Development
 
 Requires Python 3.10 or later on Windows.

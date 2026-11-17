@@ -126,6 +126,13 @@ desktopnote-cli delete <item id>                                 # 删除一个�
 
 DesktopNote 本身不会上传或同步便笺内容。它只在你点按 **检查更新** 时连接互联网：向 GitHub 查询最新版本，如果你选择安装，再从那里下载。通过命令行获得访问权限的外部脚本或 AI 智能体，可能会按照各自的行为处理便笺数据。
 
+## 代码签名政策
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+- 作者、审阅者与批准者：[Jian Wen](https://github.com/SinGuLaRiTy2001)
+- 隐私：见[数据与隐私](#数据与隐私)。
+
 ## 开发
 
 需要 Windows 上的 Python 3.10 或更高版本。
